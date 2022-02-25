@@ -1108,7 +1108,11 @@ func (s *LivepeerServer) cliWebServerHandlers(bindAddr string) *http.ServeMux {
 	})
 
 	mux.HandleFunc("/IsOrchestrator", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(fmt.Sprintf("%v", s.LivepeerNode.NodeType == core.OrchestratorNode)))
+		if (s.LivepeerNode.NodeType == core.OrchestratorNode) || (s.LivepeerNode.NodeType == core.RedeemerNode) {
+            w.Write([]byte(fmt.Sprintf("%v", "true")))
+        } else {
+            w.Write([]byte(fmt.Sprintf("%v", "false")))
+        }
 	})
 
 	mux.HandleFunc("/EthChainID", func(w http.ResponseWriter, r *http.Request) {
