@@ -619,27 +619,25 @@ func main() {
 			if *pricePerUnit < 0 {
 				panic(fmt.Errorf("-pricePerUnit must be >= 0, provided %d", *pricePerUnit))
 			}
-			n.SetBasePrice(big.NewRat(int64(*pricePerUnit), int64(*pixelsPerUnit)))
-			glog.Infof("Price: %d wei for %d pixels\n ", *pricePerUnit, *pixelsPerUnit)
-
-			n.AutoAdjustPrice = *autoAdjustPrice
-
+			
 			ev, _ := new(big.Int).SetString(*ticketEV, 10)
 			if ev == nil {
 				glog.Errorf("-ticketEV must be a valid integer, but %v provided. Restart the node with a different valid value for -ticketEV", *ticketEV)
 				return
 			}
-
 			if ev.Cmp(big.NewInt(0)) < 0 {
 				glog.Errorf("-ticketEV must be greater than 0, but %v provided. Restart the node with a different valid value for -ticketEV", *ticketEV)
 				return
 			}
-
 			if err := setupOrchestrator(n, recipientAddr); err != nil {
 				glog.Errorf("Error setting up orchestrator: %v", err)
 				return
 			}
-
+			
+			n.SetBasePrice(big.NewRat(int64(*pricePerUnit), int64(*pixelsPerUnit)))
+			glog.Infof("Price: %d wei for %d pixels\n ", *pricePerUnit, *pixelsPerUnit)
+			n.AutoAdjustPrice = *autoAdjustPrice
+			
 			sigVerifier := &pm.DefaultSigVerifier{}
 			validator := pm.NewValidator(sigVerifier, timeWatcher)
 
@@ -722,7 +720,9 @@ func main() {
 				glog.Errorf("Error setting up orchestrator: %v", err)
 				return
 			}
-
+			//set price so livepeer_cli can run with orchestrator options
+			n.SetBasePrice(big.NewRat(int64(0), int64(1)))
+			
 			r, err := server.NewRedeemer(
 				recipientAddr,
 				n.Eth,
@@ -1181,7 +1181,9 @@ func setupOrchestrator(n *core.LivepeerNode, ethOrchAddr ethcommon.Address) erro
 	if err != nil {
 		return err
 	}
-
+	//set default base price of 0 wei and 1 pixel
+	n.SetBasePrice(big.NewRat(int64(0),int64(1)))
+	
 	err = n.Database.UpdateOrch(&common.DBOrch{
 		EthereumAddr:      ethOrchAddr.Hex(),
 		ActivationRound:   common.ToInt64(orch.ActivationRound),
@@ -1199,6 +1201,7 @@ func setupOrchestrator(n *core.LivepeerNode, ethOrchAddr ethcommon.Address) erro
 
 	return nil
 }
+
 
 func defaultAddr(addr, defaultHost, defaultPort string) string {
 	if addr == "" {
