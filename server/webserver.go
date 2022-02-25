@@ -811,7 +811,62 @@ func (s *LivepeerServer) cliWebServerHandlers(bindAddr string) *http.ServeMux {
 		}
 		w.WriteHeader(http.StatusOK)
 	})
-
+    
+    mux.HandleFunc("/setFaceValueLimit", func(w http.ResponseWriter, r *http.Request) {
+        if s.LivepeerNode.NodeType == core.OrchestratorNode {
+            facevaluelimit := r.FormValue("facevaluelimit")
+            if facevaluelimit != "" {
+                fvl, success := new(big.Int).SetString(facevaluelimit,10)
+                if success {
+                    s.LivepeerNode.SetFaceValueLimit(fvl)
+                    respondOk(w, []byte("ticket faceValue limit set"))
+                } else {
+                    respondWith400(w,"facevaluelimit not set to number")
+                }
+            } else {
+                respondWith400(w, "need to set 'facevaluelimit'")
+            }
+        }
+    })
+    
+    mux.HandleFunc("/setFixedFaceValue", func(w http.ResponseWriter, r *http.Request) {
+        if s.LivepeerNode.NodeType == core.OrchestratorNode {
+            fixedfacevalue := r.FormValue("fixedfacevalue")
+            if fixedfacevalue != "" {
+                ffv, success := new(big.Int).SetString(fixedfacevalue,10)
+                if success {
+                    s.LivepeerNode.SetFixedFaceValue(ffv)
+                    respondOk(w, []byte("ticket fixed faceValue set"))
+                } else {
+                    respondWith400(w,"fixedfacevalue not set to number")
+                }
+            } else {
+                respondWith400(w, "need to set 'fixedfacevalue'")
+            }
+        }
+    })
+    
+    mux.HandleFunc("/setTicketEV", func(w http.ResponseWriter, r *http.Request) {
+        if s.LivepeerNode.NodeType == core.OrchestratorNode {
+            ticketev := r.FormValue("ticketev")
+            if ticketev != "" {
+                tev, success := new(big.Int).SetString(ticketev,10)
+                
+                if success {
+                    if tev.Cmp(big.NewInt(0)) < 0 {
+                        respondWith400(w,"ticketev must be greater than 0")
+                    }
+                    
+                    s.LivepeerNode.SetTicketEV(tev)
+                    respondOk(w, []byte("ticket expected value set"))
+                } else {
+                    respondWith400(w,"ticketev not set to number")
+                }
+            } else {
+                respondWith400(w, "need to set 'ticketev'")
+            }
+        }
+    })
 	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
 		status := s.GetNodeStatus()
 		if status != nil {

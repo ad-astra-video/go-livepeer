@@ -48,7 +48,17 @@ type Recipient interface {
 
 	// EV returns the recipients EV requirement for a ticket as configured on startup
 	EV() *big.Rat
+    
+    //Set ticket faceValue upper limit
+    SetFaceValueLimit(facevaluelimit *big.Int)
+    
+    //Set fixed ticket faceValue
+    SetFixedFaceValue(fixedfacevalue *big.Int)
+    
+    //Set ticket expected value ("EV")
+    SetTicketEV(*big.Int)
 }
+
 
 // TicketParamsConfig contains config information for a recipient to determine
 // the parameters to use for tickets
@@ -81,6 +91,8 @@ type recipient struct {
 	addr   ethcommon.Address
 	secret [32]byte
 
+    facevaluelimit *big.Int
+    fixedfacevalue *big.Int
 	senderNonces map[string]*struct {
 		nonce           uint32
 		expirationBlock *big.Int
@@ -118,6 +130,8 @@ func NewRecipientWithSecret(addr ethcommon.Address, broker Broker, val Validator
 		tm:     tm,
 		addr:   addr,
 		secret: secret,
+        facevaluelimit: big.NewInt(0),
+        fixedfacevalue: big.NewInt(0),
 		senderNonces: make(map[string]*struct {
 			nonce           uint32
 			expirationBlock *big.Int
@@ -221,6 +235,13 @@ func (r *recipient) TicketParams(sender ethcommon.Address, price *big.Rat) (*Tic
 	}, nil
 }
 
+func (r *recipient) SetFaceValueLimit(facevaluelimit *big.Int) {
+    r.facevaluelimit = facevaluelimit
+}
+
+func (r *recipient) SetFixedFaceValue(fixedfacevalue *big.Int) {
+    r.fixedfacevalue = fixedfacevalue
+}
 func (r *recipient) txCost() *big.Int {
 	gasPrice := big.NewInt(0)
 	// Fetch current gasprice from cache through gasPrice monitor
@@ -249,13 +270,26 @@ func (r *recipient) faceValue(sender ethcommon.Address) (*big.Int, error) {
 	if err != nil {
 		return nil, err
 	}
-
+    
+    if r.facevaluelimit.Cmp(big.NewInt(0)) > 0 {
+        //if faceValue > facevaluelimit, set faceValue=facevaluelimit
+        if r.facevaluelimit.Cmp(faceValue) < 0 {
+            faceValue = r.facevaluelimit
+            //this spams the logs
+            //glog.Errorf("TicketParams faceValue updated to faceValue: %v from facevaluelimit: %v", faceValue, r.facevaluelimit)
+        }
+    }
 	if faceValue.Cmp(maxFloat) > 0 {
 		// If faceValue > maxFloat
 		// Set faceValue = maxFloat
 		faceValue = maxFloat
 	}
-
+    
+    if r.fixedfacevalue.Cmp(big.NewInt(0)) > 0 {
+        faceValue = r.fixedfacevalue
+        //this spams the logs
+        //glog.Errorf("TicketParams faceValue updated to faceValue: %v from fixedfacevalue: %v", faceValue, r.fixedfacevalue)
+    }
 	if faceValue.Cmp(r.cfg.EV) < 0 {
 		return nil, errInsufficientSenderReserve
 	}
@@ -354,6 +388,9 @@ func (r *recipient) EV() *big.Rat {
 	return new(big.Rat).SetFrac(r.cfg.EV, big.NewInt(1))
 }
 
+func (r *recipient) SetTicketEV(ticket_ev *big.Int) {
+    r.cfg.EV = ticket_ev
+}
 func (r *recipient) senderNoncesCleanupLoop() {
 	sink := make(chan *big.Int, 10)
 	sub := r.tm.SubscribeL1Blocks(sink)

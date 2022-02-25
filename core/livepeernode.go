@@ -130,3 +130,27 @@ func (n *LivepeerNode) GetBasePrice() *big.Rat {
 	defer n.mu.RUnlock()
 	return n.priceInfo
 }
+
+// SetFaceValueLimit sets the faceValue upper limit for tickets received
+func (n *LivepeerNode) SetFaceValueLimit(facevaluelimit *big.Int) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+    
+	n.Recipient.SetFaceValueLimit(facevaluelimit)
+}
+
+// SetFixedFaceValue sets a fixed faceValue for tickets received
+func (n *LivepeerNode) SetFixedFaceValue(fixedfacevalue *big.Int) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+    
+	n.Recipient.SetFixedFaceValue(fixedfacevalue)
+}
+
+// SetTicketEV sets the ticket expected value for the node
+func (n *LivepeerNode) SetTicketEV(ticket_ev *big.Int) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+    
+	n.Recipient.SetTicketEV(ticket_ev)
+}
