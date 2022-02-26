@@ -1256,6 +1256,65 @@ func (s *LivepeerServer) cliWebServerHandlers(bindAddr string) *http.ServeMux {
 		mux.Handle("/metrics", monitor.Exporter)
 
 	}
+	
+	//set orchestrator transcoder selection
+	mux.HandleFunc("/setOrchTranscoderSelection", func(w http.ResponseWriter, r *http.Request) {
+		if s.LivepeerNode.NodeType == core.OrchestratorNode {
+			m := r.FormValue("selectionmethod")
+			if m != "" {
+				mi, err := strconv.Atoi(m)
+				if err == nil {
+					s.LivepeerNode.SetSortMethod(mi)
+					respondOk(w, []byte("selection method set"))
+				}
+			} else {
+				glog.Error("Need to set selection method")
+				respondWith400(w, "Need to set selection method")
+				return
+			}
+
+		}
+	})
+	
+	//set orchestrator transcoder capacity
+	mux.HandleFunc("/setTranscoderCapacity", func(w http.ResponseWriter, r *http.Request) {
+		if s.LivepeerNode.NodeType == core.OrchestratorNode {
+			t := r.FormValue("t_uri")
+			c := r.FormValue("capacity")
+			if t != "" && c != "" {
+				ci, err := strconv.Atoi(c)
+				if err == nil {
+					s.LivepeerNode.SetTranscoderCapacity(t, ci)
+					respondOk(w, []byte("capacity set"))
+				}
+			} else {
+				glog.Error("Need to set transcoder uri (t_uri) and (capacity)")
+				respondWith400(w, "Need to set transcoder uri (t_uri) and (capacity)")
+			}
+
+		}
+	})
+
+	//set orchestrator max sessions
+	mux.HandleFunc("/setMaxSessions", func(w http.ResponseWriter, r *http.Request) {
+		if s.LivepeerNode.NodeType == core.OrchestratorNode {
+			ms := r.FormValue("maxsessions")
+			if ms != "" {
+				msi, err := strconv.Atoi(ms)
+				if err == nil {
+					//update livepeernode
+					s.LivepeerNode.SetMaxSessions(msi)
+					respondOk(w, []byte("max sessions set"))
+				}
+			} else {
+				glog.Error("Need to set maxsessions")
+				respondWith400(w, "need to set maxsessions")
+				return
+			}
+
+		}
+	})
+	
 	return mux
 }
 

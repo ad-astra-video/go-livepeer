@@ -22,6 +22,7 @@ import (
 
 	"github.com/livepeer/go-livepeer/common"
 	"github.com/livepeer/go-livepeer/eth"
+	lpmon "github.com/livepeer/go-livepeer/monitor"
 )
 
 var ErrTranscoderAvail = errors.New("ErrTranscoderUnavailable")
@@ -135,7 +136,7 @@ func (n *LivepeerNode) GetBasePrice() *big.Rat {
 func (n *LivepeerNode) SetFaceValueLimit(facevaluelimit *big.Int) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-    
+
 	n.Recipient.SetFaceValueLimit(facevaluelimit)
 }
 
@@ -143,7 +144,7 @@ func (n *LivepeerNode) SetFaceValueLimit(facevaluelimit *big.Int) {
 func (n *LivepeerNode) SetFixedFaceValue(fixedfacevalue *big.Int) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-    
+
 	n.Recipient.SetFixedFaceValue(fixedfacevalue)
 }
 
@@ -153,4 +154,43 @@ func (n *LivepeerNode) SetTicketEV(ticket_ev *big.Int) {
 	defer n.mu.Unlock()
     
 	n.Recipient.SetTicketEV(ticket_ev)
+}
+
+func (n *LivepeerNode) SetSortMethod(m int) {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	n.TranscoderManager.sortMethod = m
+	if lpmon.Enabled {
+		lpmon.SetTranscoderSelectionMethod(m)
+	}
+}
+
+func (n *LivepeerNode) SetTranscoderCapacity(t_uri string, c int) {
+	n.TranscoderManager.RTmutex.Lock()
+	defer n.TranscoderManager.RTmutex.Unlock()
+	for _, transcoder := range n.TranscoderManager.liveTranscoders {
+		if transcoder.addr == t_uri {
+			//update transcoder capacity
+			transcoder.capacity = c
+			//update metrics reporting
+			if lpmon.Enabled {
+				var totalLoad, totalCapacity, liveTranscodersNum int
+				totalLoad, totalCapacity, liveTranscodersNum = n.TranscoderManager.totalLoadAndCapacity()
+				lpmon.SetTranscodersNumberAndLoad(totalLoad, totalCapacity, liveTranscodersNum)
+				lpmon.SetTranscoderStats(transcoder.addr, transcoder.load, transcoder.capacity, transcoder.pps)
+			}
+		}
+	}
+}
+
+func (n *LivepeerNode) SetMaxSessions(s int) {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	MaxSessions = s
+
+	//update metrics reporting
+	if lpmon.Enabled {
+		lpmon.MaxSessions(MaxSessions)
+	}
+
 }

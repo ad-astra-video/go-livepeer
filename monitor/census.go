@@ -99,6 +99,7 @@ type (
 		kVerified                     tag.Key
 		kClientIP                     tag.Key
 		kOrchestratorURI              tag.Key
+		kTranscoderURI                tag.Key
 		mSegmentSourceAppeared        *stats.Int64Measure
 		mSegmentEmerged               *stats.Int64Measure
 		mSegmentEmergedUnprocessed    *stats.Int64Measure
@@ -122,6 +123,10 @@ type (
 		mTranscodersNumber            *stats.Int64Measure
 		mTranscodersCapacity          *stats.Int64Measure
 		mTranscodersLoad              *stats.Int64Measure
+		mTranscoderLoad               *stats.Int64Measure
+		mTranscoderCap                *stats.Int64Measure
+		mTranscoderPPS                *stats.Float64Measure
+		mTranscoderSelectionMethod    *stats.Int64Measure
 		mSuccessRate                  *stats.Float64Measure
 		mSuccessRatePerStream         *stats.Float64Measure
 		mTranscodeTime                *stats.Float64Measure
@@ -234,6 +239,7 @@ func InitCensus(nodeType NodeType, version string) {
 	census.kVerified = tag.MustNewKey("verified")
 	census.kClientIP = tag.MustNewKey("client_ip")
 	census.kOrchestratorURI = tag.MustNewKey("orchestrator_uri")
+	census.kTranscoderURI = tag.MustNewKey("transcoder_uri")
 	census.ctx, err = tag.New(ctx, tag.Insert(census.kNodeType, string(nodeType)), tag.Insert(census.kNodeID, NodeID))
 	if err != nil {
 		glog.Fatal("Error creating context", err)
@@ -269,6 +275,10 @@ func InitCensus(nodeType NodeType, version string) {
 	census.mTranscodersNumber = stats.Int64("transcoders_number", "Number of transcoders currently connected to orchestrator", "tot")
 	census.mTranscodersCapacity = stats.Int64("transcoders_capacity", "Total advertised capacity of transcoders currently connected to orchestrator", "tot")
 	census.mTranscodersLoad = stats.Int64("transcoders_load", "Total load of transcoders currently connected to orchestrator", "tot")
+	census.mTranscoderLoad = stats.Int64("transcoder_load", "Load of each transcoder", "tot")
+	census.mTranscoderCap = stats.Int64("transcoder_capacity", "Capacity of each transcoder", "tot")
+	census.mTranscoderPPS = stats.Float64("transcoder_pps", "Transcoder pixels processed per second", "tot")
+	census.mTranscoderSelectionMethod = stats.Int64("transcoder_selection_method", "Transcoder selection method", "tot")
 	census.mSuccessRate = stats.Float64("success_rate", "Success rate", "per")
 	census.mSuccessRatePerStream = stats.Float64("success_rate_per_stream", "Success rate, per stream", "per")
 	census.mTranscodeTime = stats.Float64("transcode_time_seconds", "Transcoding time", "sec")
@@ -660,6 +670,34 @@ func InitCensus(nodeType NodeType, version string) {
 			Name:        "transcoders_load",
 			Measure:     census.mTranscodersLoad,
 			Description: "Total load of transcoders currently connected to orchestrator",
+			TagKeys:     baseTags,
+			Aggregation: view.LastValue(),
+		},
+		{
+			Name:        "transcoder_load",
+			Measure:     census.mTranscoderLoad,
+			Description: "Load of each transcoder",
+			TagKeys:     append([]tag.Key{census.kTranscoderURI}, baseTags...),
+			Aggregation: view.LastValue(),
+		},
+		{
+			Name:        "transcoder_capacity",
+			Measure:     census.mTranscoderCap,
+			Description: "Capacity of each transcoder",
+			TagKeys:     append([]tag.Key{census.kTranscoderURI}, baseTags...),
+			Aggregation: view.LastValue(),
+		},
+		{
+			Name:        "transcoder_pps",
+			Measure:     census.mTranscoderPPS,
+			Description: "Transcoder pixels processed per second",
+			TagKeys:     append([]tag.Key{census.kTranscoderURI}, baseTags...),
+			Aggregation: view.LastValue(),
+		},
+		{
+			Name:        "transcoder_selection_method",
+			Measure:     census.mTranscoderSelectionMethod,
+			Description: "Transcoder selection method",
 			TagKeys:     baseTags,
 			Aggregation: view.LastValue(),
 		},
@@ -1130,6 +1168,24 @@ func SetTranscodersNumberAndLoad(load, capacity, number int) {
 	stats.Record(census.ctx, census.mTranscodersLoad.M(int64(load)))
 	stats.Record(census.ctx, census.mTranscodersCapacity.M(int64(capacity)))
 	stats.Record(census.ctx, census.mTranscodersNumber.M(int64(number)))
+}
+
+func SetTranscoderStats(t_uri string, load int, capacity int, pps float64) {
+	stats.RecordWithTags(census.ctx, manifestIDTag(census.ctx, tag.Insert(census.kTranscoderURI, t_uri)), census.mTranscoderLoad.M(int64(load)))
+	stats.RecordWithTags(census.ctx, manifestIDTag(census.ctx, tag.Insert(census.kTranscoderURI, t_uri)), census.mTranscoderCap.M(int64(capacity)))
+	stats.RecordWithTags(census.ctx, manifestIDTag(census.ctx, tag.Insert(census.kTranscoderURI, t_uri)), census.mTranscoderPPS.M(pps))
+}
+
+func SetTranscoderPPS(t_uri string, pps float64) {
+	stats.RecordWithTags(census.ctx, manifestIDTag(census.ctx, tag.Insert(census.kTranscoderURI, t_uri)), census.mTranscoderPPS.M(pps))
+}
+
+func SetTranscoderLoad(t_uri string, load int) {
+		stats.RecordWithTags(census.ctx, manifestIDTag(census.ctx, tag.Insert(census.kTranscoderURI, t_uri)), census.mTranscoderLoad.M(int64(load)))
+}
+
+func SetTranscoderSelectionMethod(m int) {
+	stats.Record(census.ctx, census.mTranscoderSelectionMethod.M(int64(m)))
 }
 
 func SegmentEmerged(ctx context.Context, nonce, seqNo uint64, profilesNum int, dur float64) {
