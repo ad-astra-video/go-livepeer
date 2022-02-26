@@ -177,7 +177,22 @@ func (n *LivepeerNode) SetTranscoderCapacity(t_uri string, c int) {
 				var totalLoad, totalCapacity, liveTranscodersNum int
 				totalLoad, totalCapacity, liveTranscodersNum = n.TranscoderManager.totalLoadAndCapacity()
 				lpmon.SetTranscodersNumberAndLoad(totalLoad, totalCapacity, liveTranscodersNum)
-				lpmon.SetTranscoderStats(transcoder.addr, transcoder.load, transcoder.capacity, transcoder.pps)
+				lpmon.SetTranscoderStats(transcoder.addr, transcoder.load, transcoder.capacity, transcoder.ppns)
+			}
+		}
+	}
+}
+
+func (n *LivepeerNode) SetTranscoderPriority(t_uri string, p int) {
+	n.TranscoderManager.RTmutex.Lock()
+	defer n.TranscoderManager.RTmutex.Unlock()
+	for _, transcoder := range n.TranscoderManager.liveTranscoders {
+		if transcoder.addr == t_uri {
+			//update transcoder capacity
+			transcoder.priority = p
+			//update metrics reporting
+			if lpmon.Enabled {
+				lpmon.SetTranscoderPriority(transcoder.addr, transcoder.priority)
 			}
 		}
 	}

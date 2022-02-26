@@ -46,6 +46,7 @@ var transcodeLoopContext = func() (context.Context, context.CancelFunc) {
 const (
 	EqualLoad = 0
 	TimeToTranscode = 1
+	Priority = 2
 )
 
 // Transcoder / orchestrator RPC interface implementation
@@ -690,7 +691,8 @@ type RemoteTranscoder struct {
 	addr         string
 	capacity     int
 	load         int
-	pps          float64
+	ppns          float64
+	priority     int
 }
 
 // RemoteTranscoderFatalError wraps error to indicate that error is fatal
@@ -771,10 +773,10 @@ func (rt *RemoteTranscoder) Transcode(logCtx context.Context, md *SegTranscoding
 		
 		clog.InfofErr(logCtx, "Successfully received results from remote transcoder=%s segments=%d taskId=%d fname=%s dur=%v",
 			rt.addr, segmentLen, taskID, fname, took, chanData.Err)
-		rt.pps = float64(chanData.TranscodeData.Pixels) / float64(took)
+		rt.ppns = float64(chanData.TranscodeData.Pixels) / float64(took)
 		if lpmon.Enabled {
 			//add method to record stats
-			lpmon.SetTranscoderPPS(rt.addr, rt.pps)
+			lpmon.SetTranscoderPPNS(rt.addr, rt.ppns)
 		}
 		return chanData.TranscodeData, chanData.Err
 	}
@@ -787,6 +789,8 @@ func NewRemoteTranscoder(m *RemoteTranscoderManager, stream net.Transcoder_Regis
 		capacity:     capacity,
 		addr:         common.GetConnectionAddr(stream.Context()),
 		capabilities: caps,
+		ppns: 1,
+		priority: 1,
 	}
 }
 
@@ -804,12 +808,19 @@ func NewRemoteTranscoderManager() *RemoteTranscoderManager {
 	}
 }
 
-type byTranscodeTime []*RemoteTranscoder
-
-func transcodeTime(r *RemoteTranscoder) float64 {
-	return r.pps
+type byPriority []*RemoteTranscoder
+func priority(r *RemoteTranscoder) int {
+	return r.priority
 }
-
+func (r byPriority) Len() int      { return len(r) }
+func (r byPriority) Swap(i, j int) { r[i], r[j] = r[j], r[i] }
+func (r byPriority) Less(i, j int) bool {
+	return priority(r[i]) < priority(r[j]) // sort descending (pixels per second-higher is faster)
+}
+type byTranscodeTime []*RemoteTranscoder
+func transcodeTime(r *RemoteTranscoder) float64 {
+	return r.ppns
+}
 func (r byTranscodeTime) Len() int      { return len(r) }
 func (r byTranscodeTime) Swap(i, j int) { r[i], r[j] = r[j], r[i] }
 func (r byTranscodeTime) Less(i, j int) bool {
@@ -817,11 +828,9 @@ func (r byTranscodeTime) Less(i, j int) bool {
 }
 
 type byLoadFactor []*RemoteTranscoder
-
 func loadFactor(r *RemoteTranscoder) float64 {
 	return float64(r.load) / float64(r.capacity)
 }
-
 func (r byLoadFactor) Len() int      { return len(r) }
 func (r byLoadFactor) Swap(i, j int) { r[i], r[j] = r[j], r[i] }
 func (r byLoadFactor) Less(i, j int) bool {
@@ -853,8 +862,12 @@ func (rtm *RemoteTranscoderManager) RegisteredTranscodersCount() int {
 func (rtm *RemoteTranscoderManager) Sort() {
 	if rtm.sortMethod == EqualLoad {
 		sort.Sort(byLoadFactor(rtm.remoteTranscoders))
-	} else {
+	} 
+	if rtm.sortMethod == TimeToTranscode {
 		sort.Sort(byTranscodeTime(rtm.remoteTranscoders))
+	}
+	if rtm.sortMethod == Priority {
+		sort.Sort(byPriority(rtm.remoteTranscoders))
 	}
 }
 
@@ -892,7 +905,7 @@ func (rtm *RemoteTranscoderManager) Manage(stream net.Transcoder_RegisterTransco
 	rtm.RTmutex.Unlock()
 	if monitor.Enabled {
 		monitor.SetTranscodersNumberAndLoad(totalLoad, totalCapacity, liveTranscodersNum)
-		monitor.SetTranscoderStats(transcoder.addr, transcoder.load, transcoder.capacity, float64(0))
+		monitor.SetTranscoderStats(transcoder.addr, transcoder.load, transcoder.capacity, float64(2))
 	}
 
 	<-transcoder.eof

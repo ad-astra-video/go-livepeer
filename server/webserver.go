@@ -1295,6 +1295,25 @@ func (s *LivepeerServer) cliWebServerHandlers(bindAddr string) *http.ServeMux {
 		}
 	})
 
+	//set orchestrator transcoder capacity
+	mux.HandleFunc("/setTranscoderPriority", func(w http.ResponseWriter, r *http.Request) {
+		if s.LivepeerNode.NodeType == core.OrchestratorNode {
+			t := r.FormValue("t_uri")
+			p := r.FormValue("priority")
+			if t != "" && p != "" {
+				pi, err := strconv.Atoi(p)
+				if err == nil {
+					s.LivepeerNode.SetTranscoderCapacity(t, pi)
+					respondOk(w, []byte("capacity set"))
+				}
+			} else {
+				glog.Error("Need to set transcoder uri (t_uri) and (capacity)")
+				respondWith400(w, "Need to set transcoder uri (t_uri) and (capacity)")
+			}
+
+		}
+	})
+	
 	//set orchestrator max sessions
 	mux.HandleFunc("/setMaxSessions", func(w http.ResponseWriter, r *http.Request) {
 		if s.LivepeerNode.NodeType == core.OrchestratorNode {
