@@ -450,7 +450,7 @@ func (db *DB) LastSeenBlock() (*big.Int, error) {
 }
 
 func (db *DB) ChainID() (*big.Int, error) {
-	idString, err := db.selectKVStore("chainID")
+	idString, err := db.SelectKVStore("chainID")
 	if err != nil {
 		return nil, err
 	}
@@ -468,13 +468,13 @@ func (db *DB) ChainID() (*big.Int, error) {
 }
 
 func (db *DB) SetChainID(id *big.Int) error {
-	if err := db.updateKVStore("chainID", id.String()); err != nil {
+	if err := db.UpdateKVStore("chainID", id.String()); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (db *DB) selectKVStore(key string) (string, error) {
+func (db *DB) SelectKVStore(key string) (string, error) {
 	row := db.selectKV.QueryRow(key)
 	var valueString string
 	if err := row.Scan(&valueString); err != nil {
@@ -487,7 +487,7 @@ func (db *DB) selectKVStore(key string) (string, error) {
 	return valueString, nil
 }
 
-func (db *DB) updateKVStore(key, value string) error {
+func (db *DB) UpdateKVStore(key, value string) error {
 	_, err := db.updateKV.Exec(key, value)
 	if err != nil {
 		glog.Errorf("db: Unable to update %v in database: %v", key, err)

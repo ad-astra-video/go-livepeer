@@ -19,6 +19,7 @@ import (
 
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -672,6 +673,10 @@ func main() {
 				timeWatcher,
 				cfg,
 			)
+			
+			//set saved orch settings
+			setOrchSettings(n)
+			
 			if err != nil {
 				glog.Errorf("Error setting up PM recipient: %v", err)
 				return
@@ -1198,10 +1203,40 @@ func setupOrchestrator(n *core.LivepeerNode, ethOrchAddr ethcommon.Address) erro
 	} else {
 		glog.Infof("Orchestrator %v is active", ethOrchAddr.Hex())
 	}
-
+	
 	return nil
 }
 
+func setOrchSettings(n *core.LivepeerNode) {
+	fvl, err := n.Database.SelectKVStore("facevaluelimit")
+	if err == nil {
+		fvli, ok := new(big.Int).SetString(fvl,10)
+		if ok {
+			n.SetFaceValueLimit(fvli)
+		}
+	}
+	ffv, err := n.Database.SelectKVStore("fixedfacevalue")
+	if err == nil {
+		ffvi, ok := new(big.Int).SetString(ffv,10)
+		if ok {
+			n.SetFixedFaceValue(ffvi)
+		}
+	}
+	tev, err := n.Database.SelectKVStore("ticketev")
+	if err == nil {
+		tevi, ok := new(big.Int).SetString(tev,10)
+		if ok {
+			n.SetTicketEV(tevi)
+		}
+	}
+	sortm, err := n.Database.SelectKVStore("transcodersortmethod")
+	if err == nil {
+		sortmi, err := strconv.Atoi(sortm)
+		if err != nil {
+			n.SetTranscoderSortMethod(sortmi)
+		}
+	}
+}
 
 func defaultAddr(addr, defaultHost, defaultPort string) string {
 	if addr == "" {

@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"sync"
 	"time"
+	"strconv"
 
 	"github.com/livepeer/go-livepeer/pm"
 
@@ -138,6 +139,7 @@ func (n *LivepeerNode) SetFaceValueLimit(facevaluelimit *big.Int) {
 	defer n.mu.Unlock()
 
 	n.Recipient.SetFaceValueLimit(facevaluelimit)
+	n.Database.UpdateKVStore("facevaluelimit", facevaluelimit.String())
 }
 
 // SetFixedFaceValue sets a fixed faceValue for tickets received
@@ -146,22 +148,25 @@ func (n *LivepeerNode) SetFixedFaceValue(fixedfacevalue *big.Int) {
 	defer n.mu.Unlock()
 
 	n.Recipient.SetFixedFaceValue(fixedfacevalue)
+	n.Database.UpdateKVStore("fixedfacevalue", fixedfacevalue.String())
 }
 
 // SetTicketEV sets the ticket expected value for the node
-func (n *LivepeerNode) SetTicketEV(ticket_ev *big.Int) {
+func (n *LivepeerNode) SetTicketEV(ticketev *big.Int) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
     
-	n.Recipient.SetTicketEV(ticket_ev)
+	n.Recipient.SetTicketEV(ticketev)
+	n.Database.UpdateKVStore("ticketev", ticketev.String())
 }
 
-func (n *LivepeerNode) SetSortMethod(m int) {
+func (n *LivepeerNode) SetTranscoderSortMethod(m int) {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
 	n.TranscoderManager.sortMethod = m
+	n.Database.UpdateKVStore("transcodersortmethod", strconv.Itoa(m))
 	if lpmon.Enabled {
-		lpmon.SetTranscoderSelectionMethod(m)
+		lpmon.SetTranscoderSortMethod(m)
 	}
 }
 

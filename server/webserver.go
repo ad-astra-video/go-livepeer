@@ -1258,18 +1258,18 @@ func (s *LivepeerServer) cliWebServerHandlers(bindAddr string) *http.ServeMux {
 	}
 	
 	//set orchestrator transcoder selection
-	mux.HandleFunc("/setOrchTranscoderSelection", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/setTranscoderSortMethod", func(w http.ResponseWriter, r *http.Request) {
 		if s.LivepeerNode.NodeType == core.OrchestratorNode {
-			m := r.FormValue("selectionmethod")
+			m := r.FormValue("transcodersortmethod")
 			if m != "" {
 				mi, err := strconv.Atoi(m)
 				if err == nil {
-					s.LivepeerNode.SetSortMethod(mi)
-					respondOk(w, []byte("selection method set"))
+					s.LivepeerNode.SetTranscoderSortMethod(mi)
+					respondOk(w, []byte("transcoder sort method set"))
 				}
 			} else {
-				glog.Error("Need to set selection method")
-				respondWith400(w, "Need to set selection method")
+				glog.Error("Need to set transcodersortmethod")
+				respondWith400(w, "Need to set transcodersortmethod")
 				return
 			}
 
@@ -1303,12 +1303,12 @@ func (s *LivepeerServer) cliWebServerHandlers(bindAddr string) *http.ServeMux {
 			if t != "" && p != "" {
 				pi, err := strconv.Atoi(p)
 				if err == nil {
-					s.LivepeerNode.SetTranscoderCapacity(t, pi)
-					respondOk(w, []byte("capacity set"))
+					s.LivepeerNode.SetTranscoderPriority(t, pi)
+					respondOk(w, []byte("priority set"))
 				}
 			} else {
-				glog.Error("Need to set transcoder uri (t_uri) and (capacity)")
-				respondWith400(w, "Need to set transcoder uri (t_uri) and (capacity)")
+				glog.Error("Need to set transcoder uri (t_uri) and (priority)")
+				respondWith400(w, "Need to set transcoder uri (t_uri) and (priority)")
 			}
 
 		}

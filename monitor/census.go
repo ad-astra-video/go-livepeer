@@ -127,7 +127,7 @@ type (
 		mTranscoderCap                *stats.Int64Measure
 		mTranscoderPPNS               *stats.Float64Measure
 		mTranscoderPriority           *stats.Int64Measure
-		mTranscoderSelectionMethod    *stats.Int64Measure
+		mTranscoderSortMethod         *stats.Int64Measure
 		mSuccessRate                  *stats.Float64Measure
 		mSuccessRatePerStream         *stats.Float64Measure
 		mTranscodeTime                *stats.Float64Measure
@@ -280,7 +280,7 @@ func InitCensus(nodeType NodeType, version string) {
 	census.mTranscoderCap = stats.Int64("transcoder_capacity", "Capacity of each transcoder", "tot")
 	census.mTranscoderPPNS = stats.Float64("transcoder_ppns", "Transcoder pixels processed per nanosecond", "tot")
 	census.mTranscoderPriority = stats.Int64("transcoder_priority", "Transcoder priority set by orchestrator", "tot")
-	census.mTranscoderSelectionMethod = stats.Int64("transcoder_selection_method", "Transcoder selection method", "tot")
+	census.mTranscoderSortMethod = stats.Int64("transcoder_sort_method", "Transcoder sort method", "tot")
 	census.mSuccessRate = stats.Float64("success_rate", "Success rate", "per")
 	census.mSuccessRatePerStream = stats.Float64("success_rate_per_stream", "Success rate, per stream", "per")
 	census.mTranscodeTime = stats.Float64("transcode_time_seconds", "Transcoding time", "sec")
@@ -704,9 +704,9 @@ func InitCensus(nodeType NodeType, version string) {
 			Aggregation: view.LastValue(),
 		},
 		{
-			Name:        "transcoder_selection_method",
-			Measure:     census.mTranscoderSelectionMethod,
-			Description: "Transcoder selection method",
+			Name:        "transcoder_sort_method",
+			Measure:     census.mTranscoderSortMethod,
+			Description: "Transcoder sort method",
 			TagKeys:     baseTags,
 			Aggregation: view.LastValue(),
 		},
@@ -1197,8 +1197,8 @@ func SetTranscoderPriority(t_uri string, priority int) {
 	stats.RecordWithTags(census.ctx, manifestIDTag(census.ctx, tag.Insert(census.kTranscoderURI, t_uri)), census.mTranscoderPriority.M(int64(priority)))
 }
 
-func SetTranscoderSelectionMethod(m int) {
-	stats.Record(census.ctx, census.mTranscoderSelectionMethod.M(int64(m)))
+func SetTranscoderSortMethod(m int) {
+	stats.Record(census.ctx, census.mTranscoderSortMethod.M(int64(m)))
 }
 
 func SegmentEmerged(ctx context.Context, nonce, seqNo uint64, profilesNum int, dur float64) {
