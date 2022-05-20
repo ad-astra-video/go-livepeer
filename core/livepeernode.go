@@ -17,11 +17,13 @@ import (
 	"strings"
 	"sync"
 	"time"
-
+	"strings"
+	
 	"github.com/livepeer/go-livepeer/pm"
 
 	"github.com/livepeer/go-livepeer/common"
 	"github.com/livepeer/go-livepeer/eth"
+	lpmon "github.com/livepeer/go-livepeer/monitor"
 )
 
 var ErrTranscoderAvail = errors.New("ErrTranscoderUnavailable")
@@ -153,4 +155,57 @@ func (n *LivepeerNode) SetMaxFaceValue(maxfacevalue *big.Int) {
 	defer n.mu.Unlock()
 
 	n.Recipient.SetMaxFaceValue(maxfacevalue)
+}
+
+func (n *LivepeerNode) SetTranscoderSortMethod(m int) {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	n.TranscoderManager.sortMethod = m
+	if lpmon.Enabled {
+		lpmon.SetTranscoderSortMethod(m)
+	}
+}
+
+func (n *LivepeerNode) SetTranscoderCapacity(t_uri string, c int) {
+	n.TranscoderManager.RTmutex.Lock()
+	defer n.TranscoderManager.RTmutex.Unlock()
+	for _, transcoder := range n.TranscoderManager.liveTranscoders {
+		if strings.Contains(transcoder.addr, t_uri) {
+			//update transcoder capacity
+			transcoder.capacity = c
+			//update metrics reporting
+			if lpmon.Enabled {
+				var totalLoad, totalCapacity, liveTranscodersNum int
+				totalLoad, totalCapacity, liveTranscodersNum = n.TranscoderManager.totalLoadAndCapacity()
+				lpmon.SetTranscodersNumberAndLoad(totalLoad, totalCapacity, liveTranscodersNum)
+				lpmon.SetTranscoderCapacity(transcoder.addr, transcoder.capacity)
+			}
+		}
+	}
+}
+
+func (n *LivepeerNode) SetTranscoderPriority(t_uri string, p int) {
+	n.TranscoderManager.RTmutex.Lock()
+	defer n.TranscoderManager.RTmutex.Unlock()
+	for _, transcoder := range n.TranscoderManager.liveTranscoders {
+		if strings.Contains(transcoder.addr, t_uri) {
+			//update transcoder priority
+			transcoder.priority = p
+			//update metrics reporting
+			if lpmon.Enabled {
+				lpmon.SetTranscoderPriority(transcoder.addr, transcoder.priority)
+			}
+		}
+	}
+}
+
+func (n *LivepeerNode) SetMaxSessions(s int) {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	MaxSessions = s
+
+	//update metrics reporting
+	if lpmon.Enabled {
+		lpmon.MaxSessions(MaxSessions)
+	}
 }
