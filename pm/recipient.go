@@ -305,7 +305,7 @@ func (r *recipient) faceValue(sender ethcommon.Address) (*big.Int, error) {
 		glog.Errorf("Ticket face value less than transaction cost: fv %v txcost %v gasprice %v txavg %v maxfloat %v multiplier %v", faceValue, txCost, r.gpm.GasPrice(), r.txCostWithGasPrice(avgGasPrice), maxFloat, r.cfg.TxCostMultiplier)
 		return nil, errInsufficientSenderReserve
 	}
-	
+
 	return faceValue, nil
 }
 
