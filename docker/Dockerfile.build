@@ -11,7 +11,7 @@ ENV BUILD_TAGS ${BUILD_TAGS}
 COPY ./install_ffmpeg.sh ./install_ffmpeg.sh
 RUN ./install_ffmpeg.sh
 
-RUN GO111MODULE=on go get -v github.com/golangci/golangci-lint/cmd/golangci-lint@v1.25.0
+RUN GO111MODULE=on go get -v github.com/golangci/golangci-lint/cmd/golangci-lint
 RUN go get -v github.com/jstemmer/go-junit-report
 
 ENV GOFLAGS "-mod=readonly"
