@@ -175,6 +175,7 @@ func DefaultLivepeerConfig() LivepeerConfig {
 	defaultBlockPollingInterval := 5
 	defaultRedeemer := false
 	defaultRedeemerAddr := ""
+	defaultReward := false
 	defaultMonitor := false
 	defaultMetricsPerStream := false
 	defaultMetricsExposeClientIP := false
@@ -241,6 +242,7 @@ func DefaultLivepeerConfig() LivepeerConfig {
 		BlockPollingInterval:   &defaultBlockPollingInterval,
 		Redeemer:               &defaultRedeemer,
 		RedeemerAddr:           &defaultRedeemerAddr,
+		Reward:                 &defaultReward,
 		Monitor:                &defaultMonitor,
 		MetricsPerStream:       &defaultMetricsPerStream,
 		MetricsExposeClientIP:  &defaultMetricsExposeClientIP,
@@ -821,7 +823,7 @@ func StartLivepeer(ctx context.Context, cfg LivepeerConfig) {
 		}
 
 		var reward bool
-		if cfg.Reward == nil {
+		if *cfg.Reward == true {
 			// If the node address is an on-chain registered address, start the reward service
 			t, err := n.Eth.GetTranscoder(n.Eth.Account().Address)
 			if err != nil {
@@ -832,6 +834,7 @@ func StartLivepeer(ctx context.Context, cfg LivepeerConfig) {
 				reward = true
 			} else {
 				reward = false
+				glog.Info("Reward service not applicable, Eth address is not registered")
 			}
 		}
 
@@ -846,7 +849,11 @@ func StartLivepeer(ctx context.Context, cfg LivepeerConfig) {
 				return
 			}()
 			defer rs.Stop()
+			glog.Info("Reward service started")
+		} else {
+			glog.Info("Reward service NOT started")
 		}
+		
 
 		if *cfg.InitializeRound {
 			// Start round initializer
