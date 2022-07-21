@@ -42,7 +42,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v4
         with:
-          images: livepeer/go-livepeer
+          images: 0xb79orch/go-livepeer
           tags: |
             type=ref,event=branch
             type=ref,event=tag
@@ -64,5 +64,5 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           file: 'docker/Dockerfile'
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=registry,ref=livepeerci/build
-          cache-to: type=registry,ref=livepeerci/build,mode=max
+          cache-from: type=registry,ref=0xb79orch/build-livepeer
+          cache-to: type=registry,ref=0xb79orch/build-livepeer,mode=max
