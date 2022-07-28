@@ -1623,6 +1623,7 @@ func (s *LivepeerServer) GetNodeStatus() *common.NodeStatus {
 		}
 	}
 	res := &common.NodeStatus{
+		NodeType:              s.LivepeerNode.NodeType.String(),
 		Manifests:             m,
 		InternalManifests:     make(map[string]string),
 		StreamInfo:            streamInfo,
@@ -1631,6 +1632,7 @@ func (s *LivepeerServer) GetNodeStatus() *common.NodeStatus {
 		GOArch:                runtime.GOARCH,
 		GOOS:                  runtime.GOOS,
 		OrchestratorPool:      []string{},
+		TranscoderSortMethod:  0,
 		RegisteredTranscoders: []common.RemoteTranscoderInfo{},
 		LocalTranscoding:      s.LivepeerNode.TranscoderManager == nil,
 		BroadcasterPrices:     make(map[string]*big.Rat),
@@ -1639,6 +1641,7 @@ func (s *LivepeerServer) GetNodeStatus() *common.NodeStatus {
 		res.InternalManifests[string(k)] = string(v)
 	}
 	if s.LivepeerNode.TranscoderManager != nil {
+		res.TranscoderSortMethod = s.LivepeerNode.TranscoderManager.TranscoderSortMethod()
 		res.RegisteredTranscodersNumber = s.LivepeerNode.TranscoderManager.RegisteredTranscodersCount()
 		res.RegisteredTranscoders = s.LivepeerNode.TranscoderManager.RegisteredTranscodersInfo()
 	}
