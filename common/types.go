@@ -14,6 +14,9 @@ import (
 type RemoteTranscoderInfo struct {
 	Address  string
 	Capacity int
+	Priority int
+	PPNS     float64
+	RTR      float64
 }
 
 type StreamInfo struct {
@@ -25,6 +28,7 @@ type NodeStatus struct {
 	Manifests map[string]*m3u8.MasterPlaylist
 	// maps external manifest (provided in HTTP push URL to the internal one
 	// (returned from webhook))
+	NodeType                    string
 	InternalManifests           map[string]string
 	StreamInfo                  map[string]StreamInfo
 	OrchestratorPool            []string
@@ -33,6 +37,7 @@ type NodeStatus struct {
 	GolangRuntimeVersion        string
 	GOArch                      string
 	GOOS                        string
+	TranscoderSortMethod        int
 	RegisteredTranscodersNumber int
 	RegisteredTranscoders       []RemoteTranscoderInfo
 	LocalTranscoding            bool // Indicates orchestrator that is also transcoder
