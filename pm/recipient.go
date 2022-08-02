@@ -65,6 +65,8 @@ type TicketParamsConfig struct {
 	// TxCostMultiplier is the desired multiplier of the transaction
 	// cost for redemption
 	TxCostMultiplier int
+
+	FreeStream ethcommon.Address
 }
 
 // GasPriceMonitor defines methods for monitoring gas prices
@@ -259,6 +261,10 @@ func (r *recipient) txCostWithGasPrice(gasPrice *big.Int) *big.Int {
 }
 
 func (r *recipient) faceValue(sender ethcommon.Address) (*big.Int, error) {
+	if sender == r.cfg.FreeStream {
+		return big.NewInt(0), nil
+	}
+
 	txCost := r.txCost()
 	// faceValue = txCost * txCostMultiplier
 	faceValue := new(big.Int).Mul(txCost, big.NewInt(int64(r.cfg.TxCostMultiplier)))

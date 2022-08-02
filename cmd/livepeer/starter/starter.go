@@ -123,6 +123,7 @@ type LivepeerConfig struct {
 	AuthWebhookURL               *string
 	OrchWebhookURL               *string
 	DetectionWebhookURL          *string
+	FreeStream                   *string
 }
 
 // DefaultLivepeerConfig creates LivepeerConfig exactly the same as when no flags are passed to the livepeer process.
@@ -196,6 +197,8 @@ func DefaultLivepeerConfig() LivepeerConfig {
 	defaultOrchWebhookURL := ""
 	defaultDetectionWebhookURL := ""
 
+	defaultFreeStream := ""
+
 	return LivepeerConfig{
 		// Network & Addresses:
 		Network:      &defaultNetwork,
@@ -265,6 +268,8 @@ func DefaultLivepeerConfig() LivepeerConfig {
 		AuthWebhookURL:      &defaultAuthWebhookURL,
 		OrchWebhookURL:      &defaultOrchWebhookURL,
 		DetectionWebhookURL: &defaultDetectionWebhookURL,
+
+		FreeStream: &defaultFreeStream,
 	}
 }
 
@@ -739,6 +744,7 @@ func StartLivepeer(ctx context.Context, cfg LivepeerConfig) {
 				EV:               ev,
 				RedeemGas:        redeemGas,
 				TxCostMultiplier: txCostMultiplier,
+				FreeStream:       ethcommon.HexToAddress(*cfg.FreeStream),
 			}
 			n.Recipient, err = pm.NewRecipient(
 				recipientAddr,
