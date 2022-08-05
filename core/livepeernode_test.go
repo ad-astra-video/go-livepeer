@@ -163,7 +163,7 @@ func TestSetAndGetBasePrice(t *testing.T) {
 
 	price := big.NewRat(1, 1)
 
-	n.SetBasePrice(price)
-	assert.Zero(n.priceInfo.Cmp(price))
-	assert.Zero(n.GetBasePrice().Cmp(price))
+	n.SetBasePrice("default", price)
+	assert.Zero(n.priceInfo["default"].Cmp(price))
+	assert.Zero(n.GetBasePrice("default").Cmp(price))
 }

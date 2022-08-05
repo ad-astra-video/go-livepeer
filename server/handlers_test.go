@@ -114,7 +114,7 @@ func TestOrchestratorInfoHandler_Success(t *testing.T) {
 
 	s := &LivepeerServer{LivepeerNode: &core.LivepeerNode{}}
 	price := big.NewRat(1, 2)
-	s.LivepeerNode.SetBasePrice(price)
+	s.LivepeerNode.SetBasePrice("default", price)
 
 	trans := &types.Transcoder{
 		ServiceURI: "127.0.0.1:8935",
@@ -497,26 +497,26 @@ func TestSetOrchestratorPriceInfo(t *testing.T) {
 	s := stubServer()
 
 	// pricePerUnit is not an integer
-	err := s.setOrchestratorPriceInfo("nil", "1")
+	err := s.setOrchestratorPriceInfo("default", "nil", "1")
 	assert.Error(t, err)
 	assert.True(t, strings.Contains(err.Error(), "pricePerUnit is not a valid integer"))
 
 	// pixelsPerUnit is not an integer
-	err = s.setOrchestratorPriceInfo("1", "nil")
+	err = s.setOrchestratorPriceInfo("default", "1", "nil")
 	assert.Error(t, err)
 	assert.True(t, strings.Contains(err.Error(), "pixelsPerUnit is not a valid integer"))
 
-	err = s.setOrchestratorPriceInfo("1", "1")
+	err = s.setOrchestratorPriceInfo("default", "1", "1")
 	assert.Nil(t, err)
-	assert.Zero(t, s.LivepeerNode.GetBasePrice().Cmp(big.NewRat(1, 1)))
+	assert.Zero(t, s.LivepeerNode.GetBasePrice("default").Cmp(big.NewRat(1, 1)))
 
-	err = s.setOrchestratorPriceInfo("-5", "1")
+	err = s.setOrchestratorPriceInfo("default", "-5", "1")
 	assert.EqualErrorf(t, err, err.Error(), "price unit must be greater than or equal to 0, provided %d\n", -5)
 
 	// pixels per unit <= 0
-	err = s.setOrchestratorPriceInfo("1", "0")
+	err = s.setOrchestratorPriceInfo("default", "1", "0")
 	assert.EqualErrorf(t, err, err.Error(), "pixels per unit must be greater than 0, provided %d\n", 0)
-	err = s.setOrchestratorPriceInfo("1", "-5")
+	err = s.setOrchestratorPriceInfo("default", "1", "-5")
 	assert.EqualErrorf(t, err, err.Error(), "pixels per unit must be greater than 0, provided %d\n", -5)
 }
 
