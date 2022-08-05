@@ -15,6 +15,7 @@ import (
 	"math/big"
 	"math/rand"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -80,17 +81,17 @@ type LivepeerNode struct {
 	Balances          *AddressBalances
 	Capabilities      *Capabilities
 	AutoAdjustPrice   bool
-
+	PriceInfo         map[string]*big.Rat
 	// Broadcaster public fields
 	Sender pm.Sender
 
 	// Thread safety for config fields
 	mu sync.RWMutex
 	// Transcoder private fields
-	priceInfo     *big.Rat
 	serviceURI    url.URL
 	segmentMutex  *sync.RWMutex
 	StorageConfig *transcodeConfig
+
 }
 
 //NewLivepeerNode creates a new Livepeer Node. Eth can be nil.
@@ -104,6 +105,7 @@ func NewLivepeerNode(e eth.LivepeerEthClient, wd string, dbh *common.DB) (*Livep
 		SegmentChans:    make(map[ManifestID]SegmentChan),
 		segmentMutex:    &sync.RWMutex{},
 		Capabilities:    &Capabilities{capacities: map[Capability]int{}},
+		PriceInfo:       make(map[string]*big.Rat),
 	}, nil
 }
 
@@ -120,17 +122,17 @@ func (n *LivepeerNode) SetServiceURI(newUrl *url.URL) {
 }
 
 // SetBasePrice sets the base price for an orchestrator on the node
-func (n *LivepeerNode) SetBasePrice(price *big.Rat) {
+func (n *LivepeerNode) SetBasePrice(b_eth_addr string, price *big.Rat) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	n.priceInfo = price
+	n.PriceInfo[strings.ToLower(b_eth_addr)] = price
 }
 
 // GetBasePrice gets the base price for an orchestrator
-func (n *LivepeerNode) GetBasePrice() *big.Rat {
+func (n *LivepeerNode) GetBasePrice(b_eth_addr string) *big.Rat {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
-	return n.priceInfo
+	return n.PriceInfo[strings.ToLower(b_eth_addr)]
 }
 
 // SetMaxFaceValue sets the faceValue upper limit for tickets received
