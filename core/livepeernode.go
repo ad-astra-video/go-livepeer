@@ -88,8 +88,10 @@ type LivepeerNode struct {
 	// Thread safety for config fields
 	mu sync.RWMutex
 	// Transcoder private fields
-	serviceURI   url.URL
-	segmentMutex *sync.RWMutex
+	priceInfo     *big.Rat
+	serviceURI    url.URL
+	segmentMutex  *sync.RWMutex
+	StorageConfig *transcodeConfig
 }
 
 //NewLivepeerNode creates a new Livepeer Node. Eth can be nil.
