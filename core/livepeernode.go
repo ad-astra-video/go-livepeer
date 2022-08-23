@@ -91,7 +91,6 @@ type LivepeerNode struct {
 	serviceURI    url.URL
 	segmentMutex  *sync.RWMutex
 	StorageConfig *transcodeConfig
-
 }
 
 //NewLivepeerNode creates a new Livepeer Node. Eth can be nil.
@@ -123,16 +122,25 @@ func (n *LivepeerNode) SetServiceURI(newUrl *url.URL) {
 
 // SetBasePrice sets the base price for an orchestrator on the node
 func (n *LivepeerNode) SetBasePrice(b_eth_addr string, price *big.Rat) {
+	addr := strings.ToLower(b_eth_addr)
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	n.PriceInfo[strings.ToLower(b_eth_addr)] = price
+	n.PriceInfo[addr] = price
 }
 
 // GetBasePrice gets the base price for an orchestrator
 func (n *LivepeerNode) GetBasePrice(b_eth_addr string) *big.Rat {
+	addr := strings.ToLower(b_eth_addr)
 	n.mu.RLock()
 	defer n.mu.RUnlock()
-	return n.PriceInfo[strings.ToLower(b_eth_addr)]
+	if p, ok := n.PriceInfo[strings.ToLower(b_eth_addr)]; !ok {
+		return p
+	} else {
+		dp := n.PriceInfo["default"]
+		n.SetBasePrice(addr, dp)
+		return dp
+	}
+
 }
 
 // SetMaxFaceValue sets the faceValue upper limit for tickets received
