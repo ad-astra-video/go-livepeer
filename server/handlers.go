@@ -559,7 +559,7 @@ func (s *LivepeerServer) setPriceForBroadcaster() http.Handler {
 			} else {
 				respond400(w, err.Error())
 			}
-			glog.Infof("Price set for broadcaster %v to %p for %t", broadcasterEthAddr, pricePerUnitStr, pixelsPerUnitStr)
+			glog.Infof("Price set for broadcaster %b", broadcasterEthAddr)
 		} else {
 			respond400(w, "Node must be orchestrator node to set price for broadcaster")
 		}
