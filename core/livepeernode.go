@@ -81,13 +81,13 @@ type LivepeerNode struct {
 	Balances          *AddressBalances
 	Capabilities      *Capabilities
 	AutoAdjustPrice   bool
+	PriceInfo         map[string]*big.Rat
 	// Broadcaster public fields
 	Sender pm.Sender
 
 	// Thread safety for config fields
 	mu sync.RWMutex
 	// Transcoder private fields
-	priceInfo    map[string]*big.Rat
 	serviceURI   url.URL
 	segmentMutex *sync.RWMutex
 	StorageConfig *transcodeConfig
