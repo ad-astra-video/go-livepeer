@@ -286,6 +286,12 @@ func (orch *orchestrator) PriceInfo(sender ethcommon.Address) (*net.PriceInfo, e
 func (orch *orchestrator) priceInfo(sender ethcommon.Address) (*big.Rat, error) {
 	basePrice := orch.node.GetBasePrice(sender.String())
 
+	if basePrice == nil {
+		defPrice := orch.node.GetBasePrice("default")
+		orch.node.SetBasePrice(sender.String(), defPrice)
+		basePrice = defPrice
+	}
+
 	if !orch.node.AutoAdjustPrice {
 		return basePrice, nil
 	}

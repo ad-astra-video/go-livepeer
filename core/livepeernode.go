@@ -133,14 +133,8 @@ func (n *LivepeerNode) GetBasePrice(b_eth_addr string) *big.Rat {
 	addr := strings.ToLower(b_eth_addr)
 	n.mu.RLock()
 	defer n.mu.RUnlock()
-	if p, ok := n.PriceInfo[strings.ToLower(b_eth_addr)]; !ok {
-		return p
-	} else {
-		dp := n.PriceInfo["default"]
-		n.SetBasePrice(addr, dp)
-		return dp
-	}
 
+	return n.PriceInfo[addr]
 }
 
 // SetMaxFaceValue sets the faceValue upper limit for tickets received
