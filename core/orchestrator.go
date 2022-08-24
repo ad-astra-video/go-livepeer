@@ -285,6 +285,7 @@ func (orch *orchestrator) PriceInfo(sender ethcommon.Address) (*net.PriceInfo, e
 // priceInfo returns price per pixel as a fixed point number wrapped in a big.Rat
 func (orch *orchestrator) priceInfo(sender ethcommon.Address) (*big.Rat, error) {
 	basePrice := orch.node.GetBasePrice(sender.String())
+	glog.Infof("Price of %p gwei sent to sender %s", basePrice.RatString(), sender.String())
 
 	if basePrice == nil {
 		defPrice := orch.node.GetBasePrice("default")
