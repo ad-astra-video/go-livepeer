@@ -54,7 +54,7 @@ type orchestrator struct {
 //Format of broadcasterPrices json
 //{"broadcasters":[{"ethaddress":"address1","priceperunit":1000,"pixelsperunit":1}, {"ethaddress":"address2","priceperunit":2000,"pixelsperunit":3}]}
 type BroadcasterPrices struct {
-	Prices []broadcasterPrice
+	Prices []broadcasterPrice `json:"broadcasters"`
 }
 
 type broadcasterPrice struct {
