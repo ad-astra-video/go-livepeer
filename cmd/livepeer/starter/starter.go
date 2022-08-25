@@ -706,10 +706,12 @@ func StartLivepeer(ctx context.Context, cfg LivepeerConfig) {
 			n.SetBasePrice("default", big.NewRat(int64(*cfg.PricePerUnit), int64(*cfg.PixelsPerUnit)))
 			glog.Infof("Price: %d wei for %d pixels\n ", *cfg.PricePerUnit, *cfg.PixelsPerUnit)
 
-			ppb := getBroadcasterPrices(*cfg.PricePerBroadcaster)
-			for _, p := range ppb {
-				n.SetBasePrice(p.EthAddress, p.Price)
-				glog.Infof("Price: %p set for broadcaster %b", p.Price, p.EthAddress)
+			if *cfg.PricePerBroadcaster != "" {
+				ppb := getBroadcasterPrices(*cfg.PricePerBroadcaster)
+				for _, p := range ppb {
+					n.SetBasePrice(p.EthAddress, p.Price)
+					glog.Infof("Price: %p set for broadcaster %b", p.Price, p.EthAddress)
+				}
 			}
 
 			if *cfg.FreeStream != "" {
