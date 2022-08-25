@@ -710,7 +710,7 @@ func StartLivepeer(ctx context.Context, cfg LivepeerConfig) {
 				ppb := getBroadcasterPrices(*cfg.PricePerBroadcaster)
 				for _, p := range ppb {
 					n.SetBasePrice(p.EthAddress, p.Price)
-					glog.Infof("Price: %p set for broadcaster %b", p.Price, p.EthAddress)
+					glog.Infof("Price: %p set for broadcaster %b", p.Price.RatString(), p.EthAddress)
 				}
 			}
 
