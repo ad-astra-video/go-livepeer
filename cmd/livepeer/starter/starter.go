@@ -715,7 +715,7 @@ func StartLivepeer(ctx context.Context, cfg LivepeerConfig) {
 			}
 
 			if *cfg.FreeStream != "" {
-				n.SetBasePrice(*cfg.FreeStream, big.NewRat(0, 0))
+				n.SetBasePrice(*cfg.FreeStream, big.NewRat(0, 1))
 			}
 
 			n.AutoAdjustPrice = *cfg.AutoAdjustPrice
