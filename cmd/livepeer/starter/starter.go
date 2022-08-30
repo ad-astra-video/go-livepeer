@@ -716,6 +716,7 @@ func StartLivepeer(ctx context.Context, cfg LivepeerConfig) {
 
 			if *cfg.FreeStream != "" {
 				n.SetBasePrice(*cfg.FreeStream, big.NewRat(0, 1))
+				glog.Infof("Price: 0 set for broadcaster %v", *cfg.FreeStream)
 			}
 
 			n.AutoAdjustPrice = *cfg.AutoAdjustPrice
