@@ -555,11 +555,11 @@ func (s *LivepeerServer) setPriceForBroadcaster() http.Handler {
 
 			err := s.setOrchestratorPriceInfo(broadcasterEthAddr, pricePerUnitStr, pixelsPerUnitStr)
 			if err == nil {
-				respondOk(w, []byte(fmt.Sprintf("Price set for broadcaster %b", broadcasterEthAddr)))
+				respondOk(w, []byte(fmt.Sprintf("Price set for broadcaster %v", broadcasterEthAddr)))
 			} else {
 				respond400(w, err.Error())
 			}
-			glog.Infof("Price set for broadcaster %b", broadcasterEthAddr)
+			glog.Infof("Price set for broadcaster %v", broadcasterEthAddr)
 		} else {
 			respond400(w, "Node must be orchestrator node to set price for broadcaster")
 		}
