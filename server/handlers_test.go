@@ -112,7 +112,9 @@ func TestOrchestratorInfoHandler_TranscoderError(t *testing.T) {
 func TestOrchestratorInfoHandler_Success(t *testing.T) {
 	assert := assert.New(t)
 
-	s := &LivepeerServer{LivepeerNode: &core.LivepeerNode{}}
+	n, _ := core.NewLivepeerNode(nil, "", nil)
+	s := &LivepeerServer{LivepeerNode: n}
+
 	price := big.NewRat(1, 2)
 	s.LivepeerNode.SetBasePrice("default", price)
 

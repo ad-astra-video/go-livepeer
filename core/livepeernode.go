@@ -126,10 +126,6 @@ func (n *LivepeerNode) SetBasePrice(b_eth_addr string, price *big.Rat) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
-	if n.priceInfo == nil {
-		n.priceInfo = make(map[string]*big.Rat)
-	}
-
 	n.priceInfo[addr] = price
 }
 
