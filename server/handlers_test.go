@@ -520,6 +520,18 @@ func TestSetOrchestratorPriceInfo(t *testing.T) {
 	assert.EqualErrorf(t, err, err.Error(), "pixels per unit must be greater than 0, provided %d\n", 0)
 	err = s.setOrchestratorPriceInfo("default", "1", "-5")
 	assert.EqualErrorf(t, err, err.Error(), "pixels per unit must be greater than 0, provided %d\n", -5)
+
+	//set price per pixel for separate B eth address
+	b1 := ethcommon.Address{}
+	b1p := big.NewRat(1, 1)
+	b2 := ethcommon.Address{1}
+	b2p := big.NewRat(2, 1)
+	s.LivepeerNode.SetBasePrice(b1.String(), b1p)
+	s.LivepeerNode.SetBasePrice(b2.String(), b2p)
+
+	assert.Equal(t, b1p, s.LivepeerNode.GetBasePrice(b1.String()))
+	assert.Equal(t, b2p, s.LivepeerNode.GetBasePrice(b2.String()))
+
 }
 
 // Bond, withdraw, reward
