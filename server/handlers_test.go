@@ -1,3 +1,4 @@
+
 package server
 
 import (
@@ -521,17 +522,46 @@ func TestSetOrchestratorPriceInfo(t *testing.T) {
 	err = s.setOrchestratorPriceInfo("default", "1", "-5")
 	assert.EqualErrorf(t, err, err.Error(), "pixels per unit must be greater than 0, provided %d\n", -5)
 
+}
+func TestSetPriceForBroadcasterHandler(t *testing.T) {
+	assert := assert.New(t)
+	s := stubServer()
+	s.LivepeerNode.NodeType = core.OrchestratorNode
+
+	handler := s.setPriceForBroadcaster()
+
 	//set price per pixel for separate B eth address
 	b1 := ethcommon.Address{}
 	b1p := big.NewRat(1, 1)
 	b2 := ethcommon.Address{1}
 	b2p := big.NewRat(2, 1)
-	s.LivepeerNode.SetBasePrice(b1.String(), b1p)
-	s.LivepeerNode.SetBasePrice(b2.String(), b2p)
 
-	assert.Equal(t, b1p, s.LivepeerNode.GetBasePrice(b1.String()))
-	assert.Equal(t, b2p, s.LivepeerNode.GetBasePrice(b2.String()))
+	statusd, _ := postForm(handler, url.Values{
+		"pricePerUnit":       {"10"},
+		"pixelsPerUnit":      {"1"},
+		"broadcasterEthAddr": {"default"},
+	})
+	assert.Equal(http.StatusOK, statusd)
+	assert.Equal(big.NewRat(10, 1), s.LivepeerNode.GetBasePrice("default"))
 
+	status1, _ := postForm(handler, url.Values{
+		"pricePerUnit":       {"1"},
+		"pixelsPerUnit":      {"1"},
+		"broadcasterEthAddr": {b1.String()},
+	})
+	assert.Equal(http.StatusOK, status1)
+	assert.Equal(b1p, s.LivepeerNode.GetBasePrice(b1.String()))
+
+	status2, _ := postForm(handler, url.Values{
+		"pricePerUnit":       {"2"},
+		"pixelsPerUnit":      {"1"},
+		"broadcasterEthAddr": {b2.String()},
+	})
+
+	assert.Equal(http.StatusOK, status2)
+	assert.Equal(b2p, s.LivepeerNode.GetBasePrice(b2.String()))
+	assert.NotEqual(b1p, s.LivepeerNode.GetBasePrice("default"))
+	assert.NotEqual(b2p, s.LivepeerNode.GetBasePrice("default"))
 }
 
 // Bond, withdraw, reward
