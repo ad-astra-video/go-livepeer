@@ -125,6 +125,7 @@ func (n *LivepeerNode) SetBasePrice(b_eth_addr string, price *big.Rat) {
 	addr := strings.ToLower(b_eth_addr)
 	n.mu.Lock()
 	defer n.mu.Unlock()
+
 	n.priceInfo[addr] = price
 }
 
