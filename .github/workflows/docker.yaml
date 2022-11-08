@@ -83,7 +83,7 @@ jobs:
         with:
           images: |
             0xb79orch/build-livepeer
-            ghcr.io/${{ github.repository }}/build-livepeer
+            ghcr.io/${{ github.repository }}/build
           tags: |
             type=ref,event=branch
             type=ref,event=tag
