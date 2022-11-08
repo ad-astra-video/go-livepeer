@@ -82,8 +82,8 @@ jobs:
         uses: docker/metadata-action@v4
         with:
           images: |
-            livepeerci/build
-            ghcr.io/${{ github.repository }}/build
+            0xb79orch/build-livepeer
+            ghcr.io/${{ github.repository }}/build-livepeer
           tags: |
             type=ref,event=branch
             type=ref,event=tag
