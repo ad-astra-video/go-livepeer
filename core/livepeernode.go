@@ -17,8 +17,7 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"strings"
-	
+
 	"github.com/livepeer/go-livepeer/pm"
 
 	"github.com/livepeer/go-livepeer/common"
