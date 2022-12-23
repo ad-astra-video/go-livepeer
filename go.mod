@@ -9,12 +9,13 @@ require (
 	github.com/aws/aws-sdk-go v1.33.11
 	github.com/cenkalti/backoff v2.2.1+incompatible
 	github.com/cespare/cp v1.1.1 // indirect
-	github.com/ethereum/go-ethereum v1.10.17
+	github.com/ethereum/go-ethereum v1.10.26
 	github.com/fatih/color v1.12.0 // indirect
 	github.com/golang/glog v0.0.0-20210429001901-424d2337a529
 	github.com/golang/mock v1.5.0
 	github.com/golang/protobuf v1.5.2
 	github.com/jaypipes/ghw v0.9.0
+	github.com/jaypipes/pcidb v1.0.0
 	github.com/livepeer/livepeer-data v0.4.11
 	github.com/livepeer/lpms v0.0.0-20220523122311-fc32eb80248c
 	github.com/livepeer/m3u8 v0.11.1
@@ -27,14 +28,14 @@ require (
 	github.com/prometheus/tsdb v0.10.0 // indirect
 	github.com/rjeczalik/notify v0.9.2 // indirect
 	github.com/status-im/keycard-go v0.0.0-20190424133014-d95853db0f48 // indirect
-	github.com/stretchr/testify v1.7.0
+	github.com/stretchr/testify v1.7.2
 	github.com/testcontainers/testcontainers-go v0.12.0
 	github.com/tyler-smith/go-bip39 v1.0.2 // indirect
 	github.com/urfave/cli v1.22.2
 	go.opencensus.io v0.23.0
 	go.uber.org/goleak v1.0.0
 	golang.org/x/crypto v0.0.0-20211215153901-e495a2d5b3d3 // indirect
-	golang.org/x/net v0.0.0-20211112202133-69e39bad7dc2
+	golang.org/x/net v0.0.0-20220607020251-c690dde0001d
 	golang.org/x/tools v0.1.9 // indirect
 	google.golang.org/api v0.44.0
 	google.golang.org/grpc v1.38.0
