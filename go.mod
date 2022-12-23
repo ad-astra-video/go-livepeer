@@ -15,6 +15,7 @@ require (
 	github.com/golang/mock v1.5.0
 	github.com/golang/protobuf v1.5.2
 	github.com/jaypipes/ghw v0.9.0
+	github.com/jaypipes/pcidb v1.0.0
 	github.com/livepeer/livepeer-data v0.4.11
 	github.com/livepeer/lpms v0.0.0-20220523122311-fc32eb80248c
 	github.com/livepeer/m3u8 v0.11.1
@@ -34,9 +35,8 @@ require (
 	go.opencensus.io v0.23.0
 	go.uber.org/goleak v1.0.0
 	golang.org/x/crypto v0.0.0-20211215153901-e495a2d5b3d3 // indirect
-	golang.org/x/net v0.0.0-20211112202133-69e39bad7dc2
-	golang.org/x/tools v0.1.9 // indirect
+	golang.org/x/net v0.0.0-20220722155237-a158d28d115b
 	google.golang.org/api v0.44.0
-	google.golang.org/grpc v1.38.0
+	google.golang.org/grpc v1.51.0
 	pgregory.net/rapid v0.4.0
 )
