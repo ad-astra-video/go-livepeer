@@ -64,7 +64,7 @@ jobs:
         uses: docker/metadata-action@v4
         with:
           images: |
-            livepeer/go-livepeer
+            0xb79orch/go-livepeer
             ghcr.io/${{ github.repository }}
           tags: |
             type=ref,event=branch
@@ -82,7 +82,7 @@ jobs:
         uses: docker/metadata-action@v4
         with:
           images: |
-            livepeerci/build
+            0xb79orch/build-livepeer
             ghcr.io/${{ github.repository }}/build
           tags: |
             type=ref,event=branch
