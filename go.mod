@@ -15,10 +15,11 @@ require (
 	github.com/golang/mock v1.5.0
 	github.com/golang/protobuf v1.5.2
 	github.com/jaypipes/ghw v0.9.0
+	github.com/jaypipes/pcidb v1.0.0
 	github.com/livepeer/livepeer-data v0.4.11
 	github.com/livepeer/lpms v0.0.0-20220523122311-fc32eb80248c
 	github.com/livepeer/m3u8 v0.11.1
-	github.com/mattn/go-sqlite3 v1.11.0
+	github.com/mattn/go-sqlite3 v1.14.16
 	github.com/olekukonko/tablewriter v0.0.5
 	github.com/patrickmn/go-cache v2.1.0+incompatible
 	github.com/peterbourgon/ff/v3 v3.1.2
