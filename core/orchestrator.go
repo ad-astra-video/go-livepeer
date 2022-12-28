@@ -84,8 +84,14 @@ func (orch *orchestrator) Address() ethcommon.Address {
 	return orch.address
 }
 
-func (orch *orchestrator) TranscoderSecret() string {
-	return orch.node.OrchSecret
+func (rtm *RemoteTranscoderManager) CheckTranscoderSecret(secret string) (bool, bool) {
+	is_active, ok := rtm.transcoderSecrets[secret]
+	if ok {
+		return is_active, ok
+	} else {
+		glog.V(common.DEBUG).Infof("Transcoder secret %s not active", secret)
+		return false, ok
+	}
 }
 
 func (orch *orchestrator) CheckCapacity(mid ManifestID) error {
@@ -104,8 +110,8 @@ func (orch *orchestrator) TranscodeSeg(ctx context.Context, md *SegTranscodingMe
 	return orch.node.sendToTranscodeLoop(ctx, md, seg)
 }
 
-func (orch *orchestrator) ServeTranscoder(stream net.Transcoder_RegisterTranscoderServer, capacity int, capabilities *net.Capabilities) {
-	orch.node.serveTranscoder(stream, capacity, capabilities)
+func (orch *orchestrator) ServeTranscoder(stream net.Transcoder_RegisterTranscoderServer, capacity int, capabilities *net.Capabilities, secret string) {
+	orch.node.serveTranscoder(stream, capacity, capabilities, secret)
 }
 
 func (orch *orchestrator) TranscoderResults(tcID int64, res *RemoteTranscoderResult) {
@@ -692,8 +698,10 @@ func (n *LivepeerNode) endTranscodingSession(sessionId string, logCtx context.Co
 			_ = sess.stream.Send(msg)
 		}
 		n.TranscoderManager.completeStreamSession(sessionId)
+		
 		n.TranscoderManager.RTmutex.Unlock()
 	}
+
 	n.segmentMutex.Lock()
 	mid := ManifestID(sessionId)
 	if _, ok := n.SegmentChans[mid]; ok {
@@ -706,13 +714,13 @@ func (n *LivepeerNode) endTranscodingSession(sessionId string, logCtx context.Co
 	n.segmentMutex.Unlock()
 }
 
-func (n *LivepeerNode) serveTranscoder(stream net.Transcoder_RegisterTranscoderServer, capacity int, capabilities *net.Capabilities) {
+func (n *LivepeerNode) serveTranscoder(stream net.Transcoder_RegisterTranscoderServer, capacity int, capabilities *net.Capabilities, secret string) {
 	from := common.GetConnectionAddr(stream.Context())
 	coreCaps := CapabilitiesFromNetCapabilities(capabilities)
 	n.Capabilities.AddCapacity(coreCaps)
 	defer n.Capabilities.RemoveCapacity(coreCaps)
 	// Manage blocks while transcoder is connected
-	n.TranscoderManager.Manage(stream, capacity, capabilities)
+	n.TranscoderManager.Manage(stream, capacity, capabilities, secret)
 	glog.V(common.DEBUG).Infof("Closing transcoder=%s channel", from)
 }
 
@@ -735,6 +743,7 @@ type RemoteTranscoder struct {
 	ppns         float64
 	rtr          float64
 	priority     int
+	secret       string
 }
 
 // RemoteTranscoderFatalError wraps error to indicate that error is fatal
@@ -824,7 +833,7 @@ func (rt *RemoteTranscoder) Transcode(logCtx context.Context, md *SegTranscoding
 		return chanData.TranscodeData, chanData.Err
 	}
 }
-func NewRemoteTranscoder(m *RemoteTranscoderManager, stream net.Transcoder_RegisterTranscoderServer, capacity int, caps *Capabilities) *RemoteTranscoder {
+func NewRemoteTranscoder(m *RemoteTranscoderManager, stream net.Transcoder_RegisterTranscoderServer, capacity int, caps *Capabilities, secret string) *RemoteTranscoder {
 	t_uri := common.GetConnectionAddr(stream.Context())
 	pr := 1
 	if strings.Contains(t_uri, "127.0.0.1") {
@@ -840,6 +849,7 @@ func NewRemoteTranscoder(m *RemoteTranscoderManager, stream net.Transcoder_Regis
 		capabilities: caps,
 		ppns:         2,
 		priority:     pr,
+		secret:       secret,
 	}
 }
 
@@ -847,6 +857,7 @@ func NewRemoteTranscoderManager() *RemoteTranscoderManager {
 	return &RemoteTranscoderManager{
 		remoteTranscoders: []*RemoteTranscoder{},
 		liveTranscoders:   map[net.Transcoder_RegisterTranscoderServer]*RemoteTranscoder{},
+		transcoderSecrets: make(map[string]bool),
 		RTmutex:           sync.Mutex{},
 
 		taskMutex: &sync.RWMutex{},
@@ -895,6 +906,7 @@ func (r byTranscodeTime) Less(i, j int) bool {
 type RemoteTranscoderManager struct {
 	remoteTranscoders []*RemoteTranscoder
 	liveTranscoders   map[net.Transcoder_RegisterTranscoderServer]*RemoteTranscoder
+	transcoderSecrets map[string]bool
 	RTmutex           sync.Mutex
 
 	// For tracking tasks assigned to remote transcoders
@@ -904,6 +916,7 @@ type RemoteTranscoderManager struct {
 	sortMethod int
 	// Map for keeping track of sessions and their respective transcoders
 	streamSessions map[string]*RemoteTranscoder
+
 }
 
 func (rtm *RemoteTranscoderManager) Sort() {
@@ -916,6 +929,12 @@ func (rtm *RemoteTranscoderManager) Sort() {
 	if rtm.sortMethod == Priority {
 		sort.Sort(byPriority(rtm.remoteTranscoders))
 	}
+}
+
+func (rtm *RemoteTranscoderManager) TranscoderSecrets() map[string]bool {
+	rtm.RTmutex.Lock()
+	defer rtm.RTmutex.Unlock()
+	return rtm.transcoderSecrets	
 }
 
 // TranscoderSortMethod returns method node sorts transcoders by
@@ -937,16 +956,16 @@ func (rtm *RemoteTranscoderManager) RegisteredTranscodersInfo() []common.RemoteT
 	rtm.RTmutex.Lock()
 	res := make([]common.RemoteTranscoderInfo, 0, len(rtm.liveTranscoders))
 	for _, transcoder := range rtm.liveTranscoders {
-		res = append(res, common.RemoteTranscoderInfo{Address: transcoder.addr, Capacity: transcoder.capacity, Priority: transcoder.priority, RTR: transcoder.rtr, PPNS: transcoder.ppns})
+		res = append(res, common.RemoteTranscoderInfo{Address: transcoder.addr, Capacity: transcoder.capacity, Priority: transcoder.priority, RTR: transcoder.rtr, PPNS: transcoder.ppns, Secret: transcoder.secret})
 	}
 	rtm.RTmutex.Unlock()
 	return res
 }
 
 // Manage adds transcoder to list of live transcoders. Doesn't return until transcoder disconnects
-func (rtm *RemoteTranscoderManager) Manage(stream net.Transcoder_RegisterTranscoderServer, capacity int, capabilities *net.Capabilities) {
+func (rtm *RemoteTranscoderManager) Manage(stream net.Transcoder_RegisterTranscoderServer, capacity int, capabilities *net.Capabilities, secret string) {
 	from := common.GetConnectionAddr(stream.Context())
-	transcoder := NewRemoteTranscoder(rtm, stream, capacity, CapabilitiesFromNetCapabilities(capabilities))
+	transcoder := NewRemoteTranscoder(rtm, stream, capacity, CapabilitiesFromNetCapabilities(capabilities), secret)
 	go func() {
 		ctx := stream.Context()
 		<-ctx.Done()
@@ -984,6 +1003,22 @@ func (rtm *RemoteTranscoderManager) Manage(stream net.Transcoder_RegisterTransco
 	}
 }
 
+func (rtm *RemoteTranscoderManager) deleteLiveTranscoder(t *RemoteTranscoder) {
+	rtm.RTmutex.Lock()
+	var totalLoad, totalCapacity, liveTranscodersNum int
+	delete(rtm.liveTranscoders, t.stream)
+	
+	if monitor.Enabled {
+		totalLoad, totalCapacity, liveTranscodersNum = rtm.totalLoadAndCapacity()
+	}
+	rtm.RTmutex.Unlock()
+
+	if monitor.Enabled {
+		monitor.SetTranscodersNumberAndLoad(totalLoad, totalCapacity, liveTranscodersNum)
+		monitor.SetTranscoderStats(t.addr, int(0), int(0), float64(0), 0)
+	}
+}
+
 func removeFromRemoteTranscoders(rt *RemoteTranscoder, remoteTranscoders []*RemoteTranscoder) []*RemoteTranscoder {
 	if len(remoteTranscoders) == 0 {
 		// No transcoders to remove, return
@@ -1009,10 +1044,14 @@ func (rtm *RemoteTranscoderManager) selectTranscoder(sessionId string, caps *Cap
 
 	findCompatibleTranscoder := func(rtm *RemoteTranscoderManager) int {
 		for i := len(rtm.remoteTranscoders) - 1; i >= 0; i-- {
-			// no capabilities = default capabilities, all transcoders must support them
-			if caps == nil || caps.bitstring.CompatibleWith(rtm.remoteTranscoders[i].capabilities.bitstring) {
-				if rtm.remoteTranscoders[i].load < rtm.remoteTranscoders[i].capacity {
-					return i
+			//check if transcoder secret is active
+			is_active, _ := rtm.CheckTranscoderSecret(rtm.remoteTranscoders[i].secret)
+			if is_active == true {
+				// no capabilities = default capabilities, all transcoders must support them
+				if caps == nil || caps.bitstring.CompatibleWith(rtm.remoteTranscoders[i].capabilities.bitstring) {
+					if rtm.remoteTranscoders[i].load < rtm.remoteTranscoders[i].capacity {
+						return i
+					}
 				}
 			}
 		}
@@ -1080,8 +1119,16 @@ func (rtm *RemoteTranscoderManager) completeStreamSession(sessionId string) {
 	if monitor.Enabled {
 		monitor.SetTranscoderLoad(t.addr, t.load)
 	}
-	rtm.Sort()
+	
 	delete(rtm.streamSessions, sessionId)
+
+	is_active, _ := rtm.CheckTranscoderSecret(t.secret)
+	if is_active == false {
+		glog.V(common.DEBUG).Infof("Transcoder %v secret %v deactivated, closing", t.addr, t.secret)
+		t.done()
+	}
+
+	rtm.Sort()
 }
 
 // Caller of this function should hold RTmutex lock
