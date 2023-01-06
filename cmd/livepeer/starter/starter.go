@@ -403,9 +403,7 @@ func StartLivepeer(ctx context.Context, cfg LivepeerConfig) {
 	if *cfg.OrchSecret != "" {
 		n.OrchSecret, _ = common.ReadFromFile(*cfg.OrchSecret)
 	}
-	//set up transcoder secrets
-	n.GetTranscoderSecrets()
-
+	
 	var transcoderCaps []core.Capability
 	if *cfg.Transcoder {
 		core.WorkDir = *cfg.Datadir
@@ -479,6 +477,8 @@ func StartLivepeer(ctx context.Context, cfg LivepeerConfig) {
 		if !*cfg.Transcoder {
 			n.TranscoderManager = core.NewRemoteTranscoderManager()
 			n.Transcoder = n.TranscoderManager
+			//set up transcoder secrets
+			n.GetTranscoderSecrets()
 		}
 	} else if *cfg.Transcoder {
 		n.NodeType = core.TranscoderNode
