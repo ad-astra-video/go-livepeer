@@ -446,7 +446,7 @@ func gotRTMPStreamHandler(s *LivepeerServer) func(url *url.URL, rtmpStrm stream.
 						monitor.StreamStarted(nonce)
 					}
 				}
-				go processSegment(context.Background(), cxn, seg, nil)
+				go processSegment(context.Background(), cxn, seg, nil, "")
 			})
 
 			segOptions := segmenter.SegmenterOptions{
@@ -792,9 +792,10 @@ func (s *LivepeerServer) HandlePush(w http.ResponseWriter, r *http.Request) {
 
 	sliceFromStr := r.Header.Get("Content-Slice-From")
 	sliceToStr := r.Header.Get("Content-Slice-To")
+	orchAddr := r.Header.Get("OrchAddr")
 
-	clog.Infof(ctx, "Got push request at url=%s ua=%s addr=%s bytes=%d dur=%s resolution=%s slice-from=%s slice-to=%s", r.URL.String(), r.UserAgent(),
-		remoteAddr, len(body), r.Header.Get("Content-Duration"), r.Header.Get("Content-Resolution"), sliceFromStr, sliceToStr)
+	clog.Infof(ctx, "Got push request at url=%s ua=%s addr=%s bytes=%d dur=%s resolution=%s slice-from=%s slice-to=%s orchAddr=%s", r.URL.String(), r.UserAgent(),
+		remoteAddr, len(body), r.Header.Get("Content-Duration"), r.Header.Get("Content-Resolution"), sliceFromStr, sliceToStr, orchAddr)
 	var sliceFromDur time.Duration
 	if valMs, err := strconv.ParseUint(sliceFromStr, 10, 64); err == nil {
 		sliceFromDur = time.Duration(valMs) * time.Millisecond
@@ -1011,7 +1012,7 @@ func (s *LivepeerServer) HandlePush(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	// Do the transcoding!
-	urls, err := processSegment(ctx, cxn, seg, segPar)
+	urls, err := processSegment(ctx, cxn, seg, segPar, orchAddr)
 	if err != nil {
 		status := http.StatusInternalServerError
 		if isNonRetryableError(err) {
