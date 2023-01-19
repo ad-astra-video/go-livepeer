@@ -129,6 +129,7 @@ type (
 		mStreamEnded                  *stats.Int64Measure
 		mMaxSessions                  *stats.Int64Measure
 		mCurrentSessions              *stats.Int64Measure
+		mDiscoveryLatency             *stats.Float64Measure
 		mDiscoveryError               *stats.Int64Measure
 		mTranscodeRetried             *stats.Int64Measure
 		mTranscodersNumber            *stats.Int64Measure
@@ -289,6 +290,7 @@ func InitCensus(nodeType NodeType, version string) {
 	census.mStreamEnded = stats.Int64("stream_ended_total", "StreamEnded", "tot")
 	census.mMaxSessions = stats.Int64("max_sessions_total", "MaxSessions", "tot")
 	census.mCurrentSessions = stats.Int64("current_sessions_total", "Number of currently transcoded streams", "tot")
+	census.mDiscoveryLatency = stats.Float64("discovery_latency", "Time to complete discovery request", "tot")
 	census.mDiscoveryError = stats.Int64("discovery_errors_total", "Number of discover errors", "tot")
 	census.mTranscodeRetried = stats.Int64("transcode_retried", "Number of times segment transcode was retried", "tot")
 	census.mTranscodersNumber = stats.Int64("transcoders_number", "Number of transcoders currently connected to orchestrator", "tot")
@@ -637,6 +639,13 @@ func InitCensus(nodeType NodeType, version string) {
 			Aggregation: view.LastValue(),
 		},
 		{
+			Name:        "discovery_latency",
+			Measure:     census.mDiscoveryLatency,
+			Description: "Time to complete discovery request in seconds",
+			TagKeys:     append([]tag.Key{census.kOrchestratorAddress, census.kTranscoderURI, census.kOrchestratorURI}, baseTags...),
+			Aggregation: view.LastValue(),
+		},
+		{
 			Name:        "discovery_errors_total",
 			Measure:     census.mDiscoveryError,
 			Description: "Number of discover errors",
@@ -965,6 +974,15 @@ func manifestIDTagAndIP(ctx context.Context, others ...tag.Mutator) []tag.Mutato
 	return others
 }
 
+func LogDiscoveryLatency(ctx context.Context, address []byte, orch_uri string, transcoder_uri string, latency float64) {
+	if err := stats.RecordWithTags(census.ctx,
+		[]tag.Mutator{tag.Insert(census.kOrchestratorAddress, common.BytesToAddress(address).String()),
+			tag.Insert(census.kTranscoderURI, transcoder_uri),
+			tag.Insert(census.kOrchestratorURI, orch_uri)},
+		census.mDiscoveryLatency.M(latency)); err != nil {
+			clog.Errorf(ctx, "Error recording metrics err=%q", err)
+	}
+}
 // LogDiscoveryError records discovery error
 func LogDiscoveryError(ctx context.Context, uri, code string) {
 	if strings.Contains(code, "OrchestratorCapped") {
