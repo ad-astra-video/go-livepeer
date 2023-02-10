@@ -719,6 +719,8 @@ func (n *LivepeerNode) serveTranscoder(stream net.Transcoder_RegisterTranscoderS
 	coreCaps := CapabilitiesFromNetCapabilities(capabilities)
 	n.Capabilities.AddCapacity(coreCaps)
 	defer n.Capabilities.RemoveCapacity(coreCaps)
+    n.SetMaxSessions(MaxSessions + capacity)
+    defer n.SetMaxSessions(MaxSessions - capacity)
 	// Manage blocks while transcoder is connected
 	n.TranscoderManager.Manage(stream, capacity, capabilities, secret)
 	glog.V(common.DEBUG).Infof("Closing transcoder=%s channel", from)
