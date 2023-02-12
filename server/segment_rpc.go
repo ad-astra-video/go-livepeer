@@ -11,6 +11,7 @@ import (
 	"math/big"
 	gonet "net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -184,6 +185,9 @@ func (h *lphttp) ServeSegment(w http.ResponseWriter, r *http.Request) {
 	// Upload to OS and construct segment result set
 	var segments []*net.TranscodedSegmentData
 	var pixels int64
+	//TODO: FPS not determined for input, use lowest reasonable fps
+	pixels += calcInputPixels(segData.Resolution, 24, int(segData.Duration.Seconds()))
+
 	for i := 0; err == nil && i < len(res.TranscodeData.Segments); i++ {
 		var ext string
 		ext, err = common.ProfileFormatExtension(segData.Profiles[i].Format)
@@ -440,7 +444,7 @@ func SubmitSegment(ctx context.Context, sess *BroadcastSession, seg *stream.HLSS
 	}
 
 	params := sess.Params
-	fee, err := estimateFee(seg, params.Profiles, priceInfo)
+	fee, err := estimateFee(seg, params.Profiles, priceInfo, params.Resolution)
 	if err != nil {
 		return nil, err
 	}
@@ -622,7 +626,7 @@ func SubmitSegment(ctx context.Context, sess *BroadcastSession, seg *stream.HLSS
 	// transcode succeeded; continue processing response
 	if monitor.Enabled {
 		monitor.SegmentTranscoded(ctx, nonce, seg.SeqNo, time.Duration(seg.Duration*float64(time.Second)), transcodeDur,
-			common.ProfilesNames(params.Profiles), sess.IsTrusted(), verified)
+			common.ProfilesNames(params.Profiles), sess.IsTrusted(), verified, params.Resolution)
 	}
 
 	clog.Infof(ctx, "Successfully transcoded segment segName=%s seqNo=%d orch=%s dur=%s",
@@ -664,6 +668,7 @@ func genSegCreds(sess *BroadcastSession, seg *stream.HLSSegment, segPar *core.Se
 		Duration:           time.Duration(seg.Duration * float64(time.Second)),
 		Caps:               params.Capabilities,
 		AuthToken:          sess.OrchestratorInfo.GetAuthToken(),
+		Resolution:         params.Resolution,
 		DetectorEnabled:    detectorEnabled,
 		DetectorProfiles:   detectorProfiles,
 		CalcPerceptualHash: calcPerceptualHash,
@@ -689,10 +694,29 @@ func genSegCreds(sess *BroadcastSession, seg *stream.HLSSegment, segPar *core.Se
 	return base64.StdEncoding.EncodeToString(data), nil
 }
 
-func estimateFee(seg *stream.HLSSegment, profiles []ffmpeg.VideoProfile, priceInfo *big.Rat) (*big.Rat, error) {
+func calcInputPixels(resolution string, fps uint, duration int) int64 {
+	var inputPixels int64
+
+	if resolution != "" {
+		inputRes := strings.Split(strings.ToLower(resolution), "x")
+		if len(inputRes) == 2 {
+			width, w_err := strconv.Atoi(inputRes[0])
+			height, h_err := strconv.Atoi(inputRes[1])
+			if w_err == nil && h_err == nil {
+				inputPixels = int64(width*height) * int64(duration) * int64(fps)
+			}
+		}
+	}
+
+	return inputPixels
+}
+
+func estimateFee(seg *stream.HLSSegment, profiles []ffmpeg.VideoProfile, priceInfo *big.Rat, resolution string) (*big.Rat, error) {
 	if priceInfo == nil {
 		return nil, nil
 	}
+	defFPS := uint(120)
+	inputPixels := calcInputPixels(resolution, defFPS, int(seg.Duration))
 
 	// TODO: Estimate the number of input pixels
 	// Estimate the number of output pixels
@@ -706,7 +730,7 @@ func estimateFee(seg *stream.HLSSegment, profiles []ffmpeg.VideoProfile, priceIn
 		if framerate == 0 {
 			// FPS is being passed through (no fps adjustment)
 			// TODO incorporate the actual number of frames from the input
-			framerate = 120 // conservative estimate of input fps
+			framerate = defFPS // conservative estimate of input fps
 		}
 		framerateDen := p.FramerateDen
 		if framerateDen == 0 {
@@ -719,7 +743,7 @@ func estimateFee(seg *stream.HLSSegment, profiles []ffmpeg.VideoProfile, priceIn
 	}
 
 	// feeEstimate = pixels * pixelEstimateMultiplier * priceInfo
-	fee := new(big.Rat).SetInt64(outPixels)
+	fee := new(big.Rat).SetInt64(outPixels + inputPixels)
 	// Multiply pixels by pixelEstimateMultiplier to ensure that we never underpay
 	fee.Mul(fee, new(big.Rat).SetFloat64(pixelEstimateMultiplier))
 	fee.Mul(fee, priceInfo)

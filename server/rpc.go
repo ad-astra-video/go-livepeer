@@ -557,5 +557,6 @@ func coreSegMetadata(segData *net.SegData) (*core.SegTranscodingMetadata, error)
 		DetectorProfiles:   detectorProfs,
 		CalcPerceptualHash: segData.CalcPerceptualHash,
 		SegmentParameters:  segPar,
+		Resolution:         string(segData.Resolution),
 	}, nil
 }

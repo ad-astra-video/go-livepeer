@@ -66,6 +66,7 @@ type SegTranscodingMetadata struct {
 	Duration           time.Duration
 	Caps               *Capabilities
 	AuthToken          *net.AuthToken
+	Resolution         string
 	DetectorEnabled    bool
 	DetectorProfiles   []ffmpeg.DetectorProfile
 	CalcPerceptualHash bool
@@ -127,6 +128,7 @@ func NetSegData(md *SegTranscodingMetadata) (*net.SegData, error) {
 		Storage:            storage,
 		Duration:           int32(md.Duration / time.Millisecond),
 		Capabilities:       md.Caps.ToNetCapabilities(),
+		Resolution:         []byte(md.Resolution),
 		AuthToken:          md.AuthToken,
 		DetectorEnabled:    md.DetectorEnabled,
 		DetectorProfiles:   detectorProfiles,
