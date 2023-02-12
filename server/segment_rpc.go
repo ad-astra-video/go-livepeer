@@ -412,7 +412,7 @@ func verifySegCreds(ctx context.Context, orch Orchestrator, segCreds string, bro
 }
 
 func SubmitSegment(ctx context.Context, sess *BroadcastSession, seg *stream.HLSSegment, segPar *core.SegmentParameters,
-	nonce uint64, calcPerceptualHash, verified bool) (*ReceivedTranscodeResult, error) {
+	nonce uint64, calcPerceptualHash, verified bool, resolution string) (*ReceivedTranscodeResult, error) {
 
 	uploaded := seg.Name != "" // hijack seg.Name to convey the uploaded URI
 	if sess.OrchestratorInfo != nil {
@@ -422,7 +422,7 @@ func SubmitSegment(ctx context.Context, sess *BroadcastSession, seg *stream.HLSS
 		ctx = clog.AddVal(ctx, "orchestrator", sess.OrchestratorInfo.Transcoder)
 	}
 
-	segCreds, err := genSegCreds(sess, seg, segPar, calcPerceptualHash)
+	segCreds, err := genSegCreds(sess, seg, segPar, calcPerceptualHash, resolution)
 	if err != nil {
 		if monitor.Enabled {
 			monitor.SegmentUploadFailed(ctx, nonce, seg.SeqNo, monitor.SegmentUploadErrorGenCreds, err, false, sess.OrchestratorInfo.Transcoder)
@@ -622,7 +622,7 @@ func SubmitSegment(ctx context.Context, sess *BroadcastSession, seg *stream.HLSS
 	// transcode succeeded; continue processing response
 	if monitor.Enabled {
 		monitor.SegmentTranscoded(ctx, nonce, seg.SeqNo, time.Duration(seg.Duration*float64(time.Second)), transcodeDur,
-			common.ProfilesNames(params.Profiles), sess.IsTrusted(), verified)
+			common.ProfilesNames(params.Profiles), sess.IsTrusted(), verified, resolution)
 	}
 
 	clog.Infof(ctx, "Successfully transcoded segment segName=%s seqNo=%d orch=%s dur=%s",
@@ -635,7 +635,7 @@ func SubmitSegment(ctx context.Context, sess *BroadcastSession, seg *stream.HLSS
 	}, nil
 }
 
-func genSegCreds(sess *BroadcastSession, seg *stream.HLSSegment, segPar *core.SegmentParameters, calcPerceptualHash bool) (string, error) {
+func genSegCreds(sess *BroadcastSession, seg *stream.HLSSegment, segPar *core.SegmentParameters, calcPerceptualHash bool, resolution string) (string, error) {
 
 	// Send credentials for our own storage
 	var storage *net.OSInfo
@@ -664,6 +664,7 @@ func genSegCreds(sess *BroadcastSession, seg *stream.HLSSegment, segPar *core.Se
 		Duration:           time.Duration(seg.Duration * float64(time.Second)),
 		Caps:               params.Capabilities,
 		AuthToken:          sess.OrchestratorInfo.GetAuthToken(),
+		Resolution:         resolution,
 		DetectorEnabled:    detectorEnabled,
 		DetectorProfiles:   detectorProfiles,
 		CalcPerceptualHash: calcPerceptualHash,

@@ -66,6 +66,7 @@ type SegTranscodingMetadata struct {
 	Duration           time.Duration
 	Caps               *Capabilities
 	AuthToken          *net.AuthToken
+	Resolution         string
 	DetectorEnabled    bool
 	DetectorProfiles   []ffmpeg.DetectorProfile
 	CalcPerceptualHash bool

@@ -101,6 +101,7 @@ type (
 		kNodeID                       tag.Key
 		kProfile                      tag.Key
 		kProfiles                     tag.Key
+		kSourceResolution             tag.Key
 		kErrorCode                    tag.Key
 		kTry                          tag.Key
 		kSender                       tag.Key
@@ -238,6 +239,7 @@ func InitCensus(nodeType NodeType, version string) {
 	census.kNodeID = tag.MustNewKey("node_id")
 	census.kProfile = tag.MustNewKey("profile")
 	census.kProfiles = tag.MustNewKey("profiles")
+	census.kSourceResolution = tag.MustNewKey("source_resolution")
 	census.kErrorCode = tag.MustNewKey("error_code")
 	census.kTry = tag.MustNewKey("try")
 	census.kSender = tag.MustNewKey("sender")
@@ -497,7 +499,7 @@ func InitCensus(nodeType NodeType, version string) {
 			Name:        "segment_transcoded_total",
 			Measure:     census.mSegmentTranscoded,
 			Description: "SegmentTranscoded",
-			TagKeys:     append([]tag.Key{census.kProfiles, census.kTrusted, census.kVerified}, baseTags...),
+			TagKeys:     append([]tag.Key{census.kProfiles, census.kTrusted, census.kVerified, census.kSourceResolution}, baseTags...),
 			Aggregation: view.Count(),
 		},
 		{
@@ -539,7 +541,7 @@ func InitCensus(nodeType NodeType, version string) {
 			Name:        "transcode_time_seconds",
 			Measure:     census.mTranscodeTime,
 			Description: "TranscodeTime, seconds",
-			TagKeys:     append([]tag.Key{census.kProfiles, census.kTrusted, census.kVerified}, baseTags...),
+			TagKeys:     append([]tag.Key{census.kProfiles, census.kTrusted, census.kVerified, census.kSourceResolution}, baseTags...),
 			Aggregation: view.Distribution(0, .250, .500, .750, 1.000, 1.250, 1.500, 2.000, 2.500, 3.000, 3.500, 4.000, 4.500, 5.000, 10.000),
 		},
 		{
@@ -553,7 +555,7 @@ func InitCensus(nodeType NodeType, version string) {
 			Name:        "transcode_score",
 			Measure:     census.mTranscodeScore,
 			Description: "Ratio of source segment duration vs. transcode time",
-			TagKeys:     append([]tag.Key{census.kProfiles, census.kTrusted, census.kVerified}, baseTags...),
+			TagKeys:     append([]tag.Key{census.kProfiles, census.kTrusted, census.kVerified, census.kSourceResolution}, baseTags...),
 			Aggregation: view.Distribution(0, .5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 10, 15, 20, 40),
 		},
 		{
@@ -1327,14 +1329,14 @@ func (cen *censusMetricsCounter) segmentUploadFailed(ctx context.Context, nonce,
 }
 
 func SegmentTranscoded(ctx context.Context, nonce, seqNo uint64, sourceDur time.Duration, transcodeDur time.Duration, profiles string,
-	trusted, verified bool) {
+	trusted, verified bool, resolution string) {
 
 	clog.V(logLevel).Infof(ctx, "Logging SegmentTranscode nonce=%d seqNo=%d dur=%s trusted=%v verified=%v", nonce, seqNo, transcodeDur, trusted, verified)
-	census.segmentTranscoded(nonce, seqNo, sourceDur, transcodeDur, profiles, trusted, verified)
+	census.segmentTranscoded(nonce, seqNo, sourceDur, transcodeDur, profiles, trusted, verified, resolution)
 }
 
 func (cen *censusMetricsCounter) segmentTranscoded(nonce, seqNo uint64, sourceDur time.Duration, transcodeDur time.Duration,
-	profiles string, trusted, verified bool) {
+	profiles string, trusted, verified bool, resolution string) {
 
 	cen.lock.Lock()
 	defer cen.lock.Unlock()
@@ -1346,7 +1348,7 @@ func (cen *censusMetricsCounter) segmentTranscoded(nonce, seqNo uint64, sourceDu
 	if !trusted {
 		trustedStr = "untrusted"
 	}
-	ctx, err := tag.New(cen.ctx, tag.Insert(cen.kProfiles, profiles), tag.Insert(cen.kVerified, verifiedStr), tag.Insert(cen.kTrusted, trustedStr))
+	ctx, err := tag.New(cen.ctx, tag.Insert(cen.kProfiles, profiles), tag.Insert(cen.kVerified, verifiedStr), tag.Insert(cen.kTrusted, trustedStr), tag.Insert(cen.kSourceResolution, resolution))
 	if err != nil {
 		glog.Error("Error creating context", err)
 		return

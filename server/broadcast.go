@@ -52,8 +52,8 @@ var MetadataPublishTimeout = 1 * time.Second
 var getOrchestratorInfoRPC = GetOrchestratorInfo
 var downloadSeg = core.GetSegmentData
 var submitMultiSession = func(ctx context.Context, sess *BroadcastSession, seg *stream.HLSSegment, segPar *core.SegmentParameters,
-	nonce uint64, calcPerceptualHash bool, resc chan *SubmitResult) {
-	go submitSegment(ctx, sess, seg, segPar, nonce, calcPerceptualHash, resc)
+	nonce uint64, calcPerceptualHash bool, resolution string, resc chan *SubmitResult) {
+	go submitSegment(ctx, sess, seg, segPar, nonce, calcPerceptualHash, resolution, resc)
 }
 
 type BroadcastConfig struct {
@@ -1010,7 +1010,7 @@ func transcodeSegment(ctx context.Context, cxn *rtmpConnection, seg *stream.HLSS
 		// cxn.sessManager.pushSegInFlight(sess, seg)
 		sess.pushSegInFlight(seg)
 		var res *ReceivedTranscodeResult
-		res, err = SubmitSegment(ctx, sess.Clone(), seg, segPar, nonce, calcPerceptualHash, verified)
+		res, err = SubmitSegment(ctx, sess.Clone(), seg, segPar, nonce, calcPerceptualHash, verified, cxn.profile.Resolution)
 		if err != nil || res == nil {
 			if isNonRetryableError(err) {
 				cxn.sessManager.completeSession(ctx, sess, false)
@@ -1120,7 +1120,7 @@ func transcodeSegment(ctx context.Context, cxn *rtmpConnection, seg *stream.HLSS
 			}
 			// cxn.sessManager.pushSegInFlight(sess, seg)
 			sess.pushSegInFlight(seg2)
-			submitMultiSession(ctx, sess, seg2, segPar, nonce, calcPerceptualHash, resc)
+			submitMultiSession(ctx, sess, seg2, segPar, nonce, calcPerceptualHash, cxn.profile.Resolution, resc)
 			submittedCount++
 		}
 		if submittedCount == 0 {
@@ -1151,9 +1151,9 @@ type SubmitResult struct {
 }
 
 func submitSegment(ctx context.Context, sess *BroadcastSession, seg *stream.HLSSegment, segPar *core.SegmentParameters,
-	nonce uint64, calcPerceptualHash bool, resc chan *SubmitResult) {
+	nonce uint64, calcPerceptualHash bool, resolution string, resc chan *SubmitResult) {
 
-	res, err := SubmitSegment(ctx, sess.Clone(), seg, segPar, nonce, calcPerceptualHash, false)
+	res, err := SubmitSegment(ctx, sess.Clone(), seg, segPar, nonce, calcPerceptualHash, false, resolution)
 	resc <- &SubmitResult{
 		Session:         sess,
 		TranscodeResult: res,
