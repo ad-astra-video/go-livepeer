@@ -73,7 +73,7 @@ jobs:
         uses: docker/metadata-action@v4
         with:
           images: |
-            livepeer/go-livepeer
+            0xb79orch/go-livepeer
             ghcr.io/${{ github.repository }}
           tags: |
             type=ref,event=branch
@@ -91,8 +91,8 @@ jobs:
         uses: docker/metadata-action@v4
         with:
           images: |
-            livepeerci/build
-            ghcr.io/${{ github.repository }}/build
+            0xb79orch/build-livepeer
+            ghcr.io/${{ github.repository }}/build-livepeer
           tags: |
             type=ref,event=branch
             type=ref,event=tag
@@ -134,5 +134,5 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           file: 'docker/Dockerfile'
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=registry,ref=livepeerci/build:cache
-          cache-to: type=registry,ref=livepeerci/build:cache,mode=max
+          cache-from: type=registry,ref=0xb79orch/build-livepeer:cache
+          cache-to: type=registry,ref=0xb79orch/build-livepeer:cache,mode=max
