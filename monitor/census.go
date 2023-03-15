@@ -258,11 +258,7 @@ func InitCensus(nodeType NodeType, version string) {
 	census.kOrchestratorURI = tag.MustNewKey("orchestrator_uri")
 	census.kOrchestratorAddress = tag.MustNewKey("orchestrator_address")
 	census.kFVErrorType = tag.MustNewKey("fverror_type")
-<<<<<<< HEAD
-	census.kSegClassName = tag.MustNewKey("seg_class_name")
-=======
 	census.kTranscoderURI = tag.MustNewKey("transcoder_uri")
->>>>>>> 8d05ef8b... add alternate remote transcoder selection for transcode time and priority. Also add method to set max sessions for orch while running.
 	census.ctx, err = tag.New(ctx, tag.Insert(census.kNodeType, string(nodeType)), tag.Insert(census.kNodeID, NodeID))
 	if err != nil {
 		glog.Fatal("Error creating context", err)
@@ -980,9 +976,10 @@ func LogDiscoveryLatency(ctx context.Context, address []byte, orch_uri string, t
 			tag.Insert(census.kTranscoderURI, transcoder_uri),
 			tag.Insert(census.kOrchestratorURI, orch_uri)},
 		census.mDiscoveryLatency.M(latency)); err != nil {
-			clog.Errorf(ctx, "Error recording metrics err=%q", err)
+		clog.Errorf(ctx, "Error recording metrics err=%q", err)
 	}
 }
+
 // LogDiscoveryError records discovery error
 func LogDiscoveryError(ctx context.Context, uri, code string) {
 	if strings.Contains(code, "OrchestratorCapped") {
