@@ -3,9 +3,11 @@ package server
 import (
 	"container/heap"
 	"context"
+	"fmt"
 	"math/rand"
 
 	ethcommon "github.com/ethereum/go-ethereum/common"
+	"github.com/golang/glog"
 	"github.com/livepeer/go-livepeer/clog"
 	"github.com/livepeer/go-livepeer/common"
 )
@@ -144,6 +146,9 @@ func (s *MinLSSelector) Select(ctx context.Context) *BroadcastSession {
 		return s.selectUnknownSession(ctx)
 	}
 
+	//broadcaster introspection
+	session := sess.(*BroadcastSession)
+	glog.Infof("Selected orchestrator reason=%v, ethaddress=0x%v, manifestID=%v, orchSessionID=%v, ip address=%v", "performance, known session", ethcommon.Bytes2Hex(session.OrchestratorInfo.TicketParams.Recipient), session.Params.ManifestID, session.OrchestratorInfo.AuthToken.SessionId, session.OrchestratorInfo.Transcoder)
 	return heap.Pop(s.knownSessions).(*BroadcastSession)
 }
 
@@ -177,6 +182,8 @@ func (s *MinLSSelector) selectUnknownSession(ctx context.Context) *BroadcastSess
 		i := rand.Intn(len(s.unknownSessions))
 		sess := s.unknownSessions[i]
 		s.removeUnknownSession(i)
+		//broadcaster introspection
+		glog.Infof("Selected orchestrator reason=%v, ethaddress=0x%v, manifestID=%v, orchSessionID=%v, ip address=%v", fmt.Sprintf("%v random factor, orch %v of %v", s.randFreq, i, s.Size()), ethcommon.Bytes2Hex(sess.OrchestratorInfo.TicketParams.Recipient), sess.Params.ManifestID, sess.OrchestratorInfo.AuthToken.SessionId, sess.OrchestratorInfo.Transcoder)
 		return sess
 	}
 
@@ -188,6 +195,7 @@ func (s *MinLSSelector) selectUnknownSession(ctx context.Context) *BroadcastSess
 		}
 		addr := ethcommon.BytesToAddress(sess.OrchestratorInfo.TicketParams.Recipient)
 		if _, ok := addrCount[addr]; !ok {
+
 			addrs = append(addrs, addr)
 		}
 		addrCount[addr]++
@@ -230,6 +238,8 @@ func (s *MinLSSelector) selectUnknownSession(ctx context.Context) *BroadcastSess
 		stakes[addr] = 0
 
 		if r <= 0 {
+			//broadcaster introspection
+			glog.Infof("Selected orchestrator reason=%v, ethaddress=0x%v, manifestID=%v, orchSessionID=%v, ip address=%v", fmt.Sprintf("stake weight, orch %v of %v", i, s.Size()), ethcommon.Bytes2Hex(sess.OrchestratorInfo.TicketParams.Recipient), sess.Params.ManifestID, sess.OrchestratorInfo.AuthToken.SessionId, sess.OrchestratorInfo.Transcoder)
 			s.removeUnknownSession(i)
 			return sess
 		}

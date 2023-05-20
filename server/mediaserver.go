@@ -484,6 +484,10 @@ func endRTMPStreamHandler(s *LivepeerServer) func(url *url.URL, rtmpStrm stream.
 
 		//Remove RTMP stream
 		err := removeRTMPStream(context.Background(), s, params.ManifestID)
+
+		//TODO: Session ID is blank
+		//broadcaster introspection
+		glog.Infof("Stream ended reason=%v, ethaddress=0x%v, manifestID=%v, orchSessionID=%v, ip address=%v", "no more segments", "", params.ManifestID, params.SessionID, "")
 		if err != nil {
 			return err
 		}
