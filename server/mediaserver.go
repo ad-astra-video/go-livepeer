@@ -484,6 +484,8 @@ func endRTMPStreamHandler(s *LivepeerServer) func(url *url.URL, rtmpStrm stream.
 
 		//Remove RTMP stream
 		err := removeRTMPStream(context.Background(), s, params.ManifestID)
+
+		//TODO: Session ID is blank
 		if err != nil {
 			return err
 		}
@@ -964,6 +966,7 @@ func (s *LivepeerServer) HandlePush(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx = clog.AddManifestID(ctx, string(mid))
 	defer func(now time.Time) {
+		//broadcaster introspection
 		clog.Infof(ctx, "Finished push request at url=%s ua=%s addr=%s bytes=%d dur=%s resolution=%s took=%s", r.URL.String(), r.UserAgent(), r.RemoteAddr, len(body),
 			r.Header.Get("Content-Duration"), r.Header.Get("Content-Resolution"), time.Since(now))
 	}(now)
@@ -1045,6 +1048,7 @@ func (s *LivepeerServer) HandlePush(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	//broadcaster introspection
 	clog.Infof(ctx, "Finished transcoding push request at url=%s took=%s", r.URL.String(), time.Since(now))
 
 	boundary := common.RandName()

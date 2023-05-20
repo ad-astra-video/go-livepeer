@@ -3,9 +3,11 @@ package server
 import (
 	"container/heap"
 	"context"
+	"fmt"
 	"math/rand"
 
 	ethcommon "github.com/ethereum/go-ethereum/common"
+	"github.com/golang/glog"
 	"github.com/livepeer/go-livepeer/clog"
 	"github.com/livepeer/go-livepeer/common"
 )
@@ -16,7 +18,7 @@ const SELECTOR_LATENCY_SCORE_THRESHOLD = 1.0
 type BroadcastSessionsSelector interface {
 	Add(sessions []*BroadcastSession)
 	Complete(sess *BroadcastSession)
-	Select(ctx context.Context) *BroadcastSession
+	Select(ctx context.Context) (*BroadcastSession, string)
 	Size() int
 	Clear()
 }
@@ -133,7 +135,7 @@ func (s *MinLSSelector) Complete(sess *BroadcastSession) {
 
 // Select returns the session with the lowest latency score if it is good enough.
 // Otherwise, a session without a latency score yet is returned
-func (s *MinLSSelector) Select(ctx context.Context) *BroadcastSession {
+func (s *MinLSSelector) Select(ctx context.Context) (*BroadcastSession, string) {
 	sess := s.knownSessions.Peek()
 	if sess == nil {
 		return s.selectUnknownSession(ctx)
@@ -144,7 +146,10 @@ func (s *MinLSSelector) Select(ctx context.Context) *BroadcastSession {
 		return s.selectUnknownSession(ctx)
 	}
 
-	return heap.Pop(s.knownSessions).(*BroadcastSession)
+	//broadcaster introspection
+	session := sess.(*BroadcastSession)
+	glog.Infof("%v Selected orchestrator reason=performance, known session", session.LogInfo())
+	return heap.Pop(s.knownSessions).(*BroadcastSession), "performance, known session"
 }
 
 // Size returns the number of sessions stored by the selector
@@ -160,16 +165,16 @@ func (s *MinLSSelector) Clear() {
 }
 
 // Use stake weighted random selection to select from unknownSessions
-func (s *MinLSSelector) selectUnknownSession(ctx context.Context) *BroadcastSession {
+func (s *MinLSSelector) selectUnknownSession(ctx context.Context) (*BroadcastSession, string) {
 	if len(s.unknownSessions) == 0 {
-		return nil
+		return nil, "no unknown sessions"
 	}
 
 	if s.stakeRdr == nil {
 		// Sessions are selected based on the order of unknownSessions in off-chain mode
 		sess := s.unknownSessions[0]
 		s.unknownSessions = s.unknownSessions[1:]
-		return sess
+		return sess, "selected first in list (offchain mode)"
 	}
 
 	// Select an unknown session randomly based on randFreq frequency
@@ -177,7 +182,8 @@ func (s *MinLSSelector) selectUnknownSession(ctx context.Context) *BroadcastSess
 		i := rand.Intn(len(s.unknownSessions))
 		sess := s.unknownSessions[i]
 		s.removeUnknownSession(i)
-		return sess
+		//broadcaster introspection
+		return sess, fmt.Sprintf("%v random factor, orch %v of %v", s.randFreq, i, s.Size())
 	}
 
 	var addrs []ethcommon.Address
@@ -188,6 +194,7 @@ func (s *MinLSSelector) selectUnknownSession(ctx context.Context) *BroadcastSess
 		}
 		addr := ethcommon.BytesToAddress(sess.OrchestratorInfo.TicketParams.Recipient)
 		if _, ok := addrCount[addr]; !ok {
+
 			addrs = append(addrs, addr)
 		}
 		addrCount[addr]++
@@ -199,7 +206,7 @@ func (s *MinLSSelector) selectUnknownSession(ctx context.Context) *BroadcastSess
 	// If we fail to read stake weights of unknownSessions we should not continue with selection
 	if err != nil {
 		clog.Errorf(ctx, "failed to read stake weights for selection err=%q", err)
-		return nil
+		return nil, "no stake weights available"
 	}
 
 	totalStake := int64(0)
@@ -231,11 +238,12 @@ func (s *MinLSSelector) selectUnknownSession(ctx context.Context) *BroadcastSess
 
 		if r <= 0 {
 			s.removeUnknownSession(i)
-			return sess
+			//broadcaster introspection
+			return sess, fmt.Sprintf("stake weight, orch %v of %v", i, s.Size())
 		}
 	}
 
-	return nil
+	return nil, "no session selected"
 }
 
 func (s *MinLSSelector) removeUnknownSession(i int) {
