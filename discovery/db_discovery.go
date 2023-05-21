@@ -237,10 +237,6 @@ func (dbo *DBOrchestratorPoolCache) cacheOrchestratorStake() error {
 }
 
 func (dbo *DBOrchestratorPoolCache) pollOrchestratorInfo(ctx context.Context) error {
-	if err := dbo.cacheDBOrchs(); err != nil {
-		return err
-	}
-
 	ticker := getTicker()
 	go func() {
 		for {
@@ -248,7 +244,7 @@ func (dbo *DBOrchestratorPoolCache) pollOrchestratorInfo(ctx context.Context) er
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				if err := dbo.cacheDBOrchs(); err != nil {
+				if err := dbo.cacheTranscoderPool(); err != nil {
 					glog.Errorf("unable to poll orchestrator info: %v", err)
 				}
 			}
