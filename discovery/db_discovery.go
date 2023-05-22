@@ -237,6 +237,12 @@ func (dbo *DBOrchestratorPoolCache) cacheOrchestratorStake() error {
 }
 
 func (dbo *DBOrchestratorPoolCache) pollOrchestratorInfo(ctx context.Context) error {
+	//get OrchestratorInfo at startup
+	if err := dbo.cacheDBOrchs(); err != nil {
+		glog.Errorf("unable to poll orchestrator info: %v", err)
+	}
+
+	//poll OrchestratorInfo periodically
 	ticker := getTicker()
 	go func() {
 		for {
@@ -277,6 +283,7 @@ func (dbo *DBOrchestratorPoolCache) cacheDBOrchs() error {
 
 		info, err := serverGetOrchInfo(ctx, dbo.bcast, uri)
 		if err != nil {
+			glog.Infof("could not connect to %v, checking service uri on chain for %v", dbOrch.ServiceURI, dbOrch.EthereumAddr)
 			//check for new ServiceURI
 			newServiceURI, err := dbo.lpEth.GetServiceURI(ethcommon.HexToAddress(dbOrch.EthereumAddr))
 			if err != nil {
@@ -288,6 +295,8 @@ func (dbo *DBOrchestratorPoolCache) cacheDBOrchs() error {
 					errc <- err
 					return
 				}
+				//update serviceURI
+				dbo.store.UpdateOrch(&common.DBOrch{EthereumAddr: dbOrch.EthereumAddr, ServiceURI: newServiceURI})
 			} else {
 				errc <- err
 				return
