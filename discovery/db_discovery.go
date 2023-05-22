@@ -244,7 +244,7 @@ func (dbo *DBOrchestratorPoolCache) pollOrchestratorInfo(ctx context.Context) er
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				if err := dbo.cacheTranscoderPool(); err != nil {
+				if err := dbo.cacheDBOrchs(); err != nil {
 					glog.Errorf("unable to poll orchestrator info: %v", err)
 				}
 			}
@@ -277,8 +277,21 @@ func (dbo *DBOrchestratorPoolCache) cacheDBOrchs() error {
 
 		info, err := serverGetOrchInfo(ctx, dbo.bcast, uri)
 		if err != nil {
-			errc <- err
-			return
+			//check for new ServiceURI
+			newServiceURI, err := dbo.lpEth.GetServiceURI(ethcommon.HexToAddress(dbOrch.EthereumAddr))
+			if err != nil {
+				errc <- err
+				return
+			}
+			if uri, err = parseURI(newServiceURI); err == nil {
+				if info, err = serverGetOrchInfo(ctx, dbo.bcast, uri); err != nil {
+					errc <- err
+					return
+				}
+			} else {
+				errc <- err
+				return
+			}
 		}
 
 		// Return early if no ETH address is specified
