@@ -238,9 +238,10 @@ func (s *MinLSSelector) selectUnknownSession(ctx context.Context) *BroadcastSess
 		}
 		addr := ethcommon.BytesToAddress(sess.OrchestratorInfo.TicketParams.Recipient)
 		// If we could not fetch the stake weight for addr then its stake weight defaults to 0
+		stake := stakes[addr]
 		if StakeCap != 0 {
-			if stakes[addr] < StakeCap {
-				r -= stakes[addr]
+			if stake < StakeCap {
+				r -= stake
 			} else {
 				r -= StakeCap
 			}
@@ -251,7 +252,7 @@ func (s *MinLSSelector) selectUnknownSession(ctx context.Context) *BroadcastSess
 
 		if r <= 0 {
 			//broadcaster introspection
-			glog.Infof("Selected orchestrator reason=%v, ethaddress=0x%v, manifestID=%v, orchSessionID=%v, ip address=%v", fmt.Sprintf("stake weight, orch %v of %v", i, s.Size()), ethcommon.Bytes2Hex(sess.OrchestratorInfo.TicketParams.Recipient), sess.Params.ManifestID, sess.OrchestratorInfo.AuthToken.SessionId, sess.OrchestratorInfo.Transcoder)
+			glog.Infof("Selected orchestrator reason=%v, ethaddress=0x%v, manifestID=%v, orchSessionID=%v, ip address=%v", fmt.Sprintf("stake weight of %d, orch %v of %v", stake, i, s.Size()), ethcommon.Bytes2Hex(sess.OrchestratorInfo.TicketParams.Recipient), sess.Params.ManifestID, sess.OrchestratorInfo.AuthToken.SessionId, sess.OrchestratorInfo.Transcoder)
 			s.removeUnknownSession(i)
 			return sess
 		}
