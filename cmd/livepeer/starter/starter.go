@@ -1099,6 +1099,7 @@ func StartLivepeer(ctx context.Context, cfg LivepeerConfig) {
 		// Set max transcode attempts. <=0 is OK; it just means "don't transcode"
 		server.MaxAttempts = *cfg.MaxAttempts
 		server.SelectRandFreq = *cfg.SelectRandFreq
+		server.StakeCap = int64(0)
 
 	} else if n.NodeType == core.OrchestratorNode {
 		suri, err := getServiceURI(n, *cfg.ServiceAddr)

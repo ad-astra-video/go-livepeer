@@ -212,6 +212,12 @@ func (s *MinLSSelector) selectUnknownSession(ctx context.Context) *BroadcastSess
 
 	totalStake := int64(0)
 	for _, stake := range stakes {
+		if StakeCap != 0 {
+			if stake > StakeCap {
+				stake = StakeCap
+			}
+		}
+
 		totalStake += stake
 	}
 
@@ -232,7 +238,13 @@ func (s *MinLSSelector) selectUnknownSession(ctx context.Context) *BroadcastSess
 		}
 		addr := ethcommon.BytesToAddress(sess.OrchestratorInfo.TicketParams.Recipient)
 		// If we could not fetch the stake weight for addr then its stake weight defaults to 0
-		r -= stakes[addr]
+		if StakeCap != 0 {
+			if stakes[addr] < StakeCap {
+				r -= stakes[addr]
+			} else {
+				r -= StakeCap
+			}
+		}
 		// The first session in the list of a particular address gets *all* the stake
 		// so set the remaining stake for that address's session to zero
 		stakes[addr] = 0

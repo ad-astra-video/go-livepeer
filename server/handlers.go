@@ -126,12 +126,28 @@ func setBroadcastConfigHandler() http.Handler {
 		pricePerUnit := r.FormValue("maxPricePerUnit")
 		pixelsPerUnit := r.FormValue("pixelsPerUnit")
 		transcodingOptions := r.FormValue("transcodingOptions")
+		randFreq := r.FormValue("randfreq")
+		stakeCap := r.FormValue("stakecap")
 
 		if (pricePerUnit == "" || pixelsPerUnit == "") && transcodingOptions == "" {
 			respond400(w, "missing form params (maxPricePerUnit AND pixelsPerUnit) or transcodingOptions")
 			return
 		}
 
+		//set select rand freq
+		if randFreq != "" {
+			randFreqFloat, err := strconv.ParseFloat(randFreq, 64)
+			if err == nil {
+				SelectRandFreq = randFreqFloat
+			}
+		}
+		//set stake cap
+		if stakeCap != "" {
+			stakeCapInt, err := strconv.ParseInt(stakeCap, 10, 64)
+			if err == nil {
+				StakeCap = stakeCapInt
+			}
+		}
 		// set max price
 		if pricePerUnit != "" && pixelsPerUnit != "" {
 			pr, err := strconv.ParseInt(pricePerUnit, 10, 64)
@@ -187,10 +203,13 @@ func getBroadcastConfigHandler() http.Handler {
 		config := struct {
 			MaxPrice           *big.Rat
 			TranscodingOptions string
-
+			SelectRandFreq     float64
+			SelectStakeCap     int64
 		}{
 			BroadcastCfg.MaxPrice(),
 			strings.Join(pNames, ","),
+			SelectRandFreq,
+			StakeCap,
 		}
 
 		respondJson(w, config)
@@ -208,7 +227,7 @@ func getAvailableTranscodingOptionsHandler() http.Handler {
 	})
 }
 
-func (s* LivepeerServer) getSessionPoolInfoHandler() http.Handler {
+func (s *LivepeerServer) getSessionPoolInfoHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.LivepeerNode.NodeType == core.BroadcasterNode {
 			cxn_session_pools := make(map[string]map[string]interface{})
@@ -223,7 +242,7 @@ func (s* LivepeerServer) getSessionPoolInfoHandler() http.Handler {
 				session_pool["untrusted"] = s.rtmpConnections[cpl.ManifestID()].sessManager.untrustedPool.sessMap
 				cxn_session_pools[mid] = session_pool
 			}
-			
+
 			respondJson(w, cxn_session_pools)
 		}
 	})
@@ -1437,7 +1456,7 @@ func isL1Network(db ChainIdGetter) (bool, error) {
 	return chainId.Int64() == MainnetChainId || chainId.Int64() == RinkebyChainId, err
 }
 
-//set remote transcoder info
+// set remote transcoder info
 func (s *LivepeerServer) setTranscoderSortMethodHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.LivepeerNode.NodeType == core.OrchestratorNode {
@@ -1541,7 +1560,7 @@ func (s *LivepeerServer) deactivateTranscoderSecretHandler() http.Handler {
 			if secret == "" {
 				respond400(w, "need to set secret")
 			}
-		
+
 			s.LivepeerNode.UpdateTranscoderSecret(secret, false)
 			glog.Infof("Transcoder secret deactivated: %v", secret)
 			respondOk(w, []byte(""))
