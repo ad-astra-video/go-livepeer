@@ -240,17 +240,17 @@ func TestRPCSeg(t *testing.T) {
 		Params: &core.StreamParameters{
 			ManifestID: mid,
 			Profiles:   []ffmpeg.VideoProfile{ffmpeg.P720p30fps16x9},
+			Resolution: "1920x1080",
 		},
 		OrchestratorInfo: &net.OrchestratorInfo{
 			AuthToken: authToken,
 		},
 	}
-	sourceResolution := "1920x1080"
 	baddr := ethcrypto.PubkeyToAddress(b.priv.PublicKey)
 
 	segData := &stream.HLSSegment{}
 
-	creds, err := genSegCreds(s, segData, nil, false, sourceResolution)
+	creds, err := genSegCreds(s, segData, nil, false)
 	if err != nil {
 		t.Error("Unable to generate seg creds ", err)
 		return
@@ -262,7 +262,7 @@ func TestRPCSeg(t *testing.T) {
 
 	// error signing
 	b.signErr = fmt.Errorf("SignErr")
-	if _, err := genSegCreds(s, segData, nil, false, sourceResolution); err != b.signErr {
+	if _, err := genSegCreds(s, segData, nil, false); err != b.signErr {
 		t.Error("Generating seg creds ", err)
 	}
 	b.signErr = nil
@@ -283,28 +283,28 @@ func TestRPCSeg(t *testing.T) {
 
 	// missing auth token
 	s.OrchestratorInfo.AuthToken = nil
-	creds, err = genSegCreds(s, &stream.HLSSegment{Duration: 1.5}, nil, false, sourceResolution)
+	creds, err = genSegCreds(s, &stream.HLSSegment{Duration: 1.5}, nil, false)
 	require.Nil(t, err)
 	_, _, err = verifySegCreds(context.TODO(), o, creds, baddr)
 	assert.Equal(t, "missing auth token", err.Error())
 
 	// invalid auth token
 	s.OrchestratorInfo.AuthToken = &net.AuthToken{Token: []byte("notfoo")}
-	creds, err = genSegCreds(s, &stream.HLSSegment{Duration: 1.5}, nil, false, sourceResolution)
+	creds, err = genSegCreds(s, &stream.HLSSegment{Duration: 1.5}, nil, false)
 	require.Nil(t, err)
 	_, _, err = verifySegCreds(context.TODO(), o, creds, baddr)
 	assert.Equal(t, "invalid auth token", err.Error())
 
 	// expired auth token
 	s.OrchestratorInfo.AuthToken = &net.AuthToken{Token: authToken.Token, SessionId: authToken.SessionId, Expiration: time.Now().Add(-1 * time.Hour).Unix()}
-	creds, err = genSegCreds(s, &stream.HLSSegment{Duration: 1.5}, nil, false, sourceResolution)
+	creds, err = genSegCreds(s, &stream.HLSSegment{Duration: 1.5}, nil, false)
 	assert.Nil(t, err)
 	_, _, err = verifySegCreds(context.TODO(), o, creds, baddr)
 	assert.Equal(t, "expired auth token", err.Error())
 	s.OrchestratorInfo.AuthToken = authToken
 
 	// check duration
-	creds, err = genSegCreds(s, &stream.HLSSegment{Duration: 1.5}, nil, false, sourceResolution)
+	creds, err = genSegCreds(s, &stream.HLSSegment{Duration: 1.5}, nil, false)
 	if err != nil {
 		t.Error("Could not generate creds ", err)
 	}
@@ -322,7 +322,8 @@ func TestRPCSeg(t *testing.T) {
 	}
 
 	//check resolution
-	if netSegData.Resolution != []byte(sourceResolution) {
+	res := string(netSegData.Resolution[:])
+	if res != "1920x1080" {
 		t.Error("Got unexepected source resolution ", netSegData.Resolution)
 	}
 
@@ -365,15 +366,15 @@ func TestRPCSeg(t *testing.T) {
 
 func TestEstimateFee(t *testing.T) {
 	assert := assert.New(t)
-
+	sourceResolution := "1920x1080"
 	// Test nil priceInfo
-	fee, err := estimateFee(&stream.HLSSegment{}, []ffmpeg.VideoProfile{}, nil)
+	fee, err := estimateFee(&stream.HLSSegment{}, []ffmpeg.VideoProfile{}, nil, sourceResolution)
 	assert.Nil(err)
 	assert.Nil(fee)
 
 	// Test first profile is invalid
 	profiles := []ffmpeg.VideoProfile{{Resolution: "foo"}}
-	_, err = estimateFee(&stream.HLSSegment{}, profiles, big.NewRat(1, 1))
+	_, err = estimateFee(&stream.HLSSegment{}, profiles, big.NewRat(1, 1), sourceResolution)
 	assert.Error(err)
 
 	// Test non-first profile is invalid
@@ -381,65 +382,65 @@ func TestEstimateFee(t *testing.T) {
 		ffmpeg.P144p30fps16x9,
 		{Resolution: "foo"},
 	}
-	_, err = estimateFee(&stream.HLSSegment{}, profiles, big.NewRat(1, 1))
+	_, err = estimateFee(&stream.HLSSegment{}, profiles, big.NewRat(1, 1), sourceResolution)
 	assert.Error(err)
 
 	// Test no profiles
-	fee, err = estimateFee(&stream.HLSSegment{Duration: 2.0}, []ffmpeg.VideoProfile{}, big.NewRat(1, 1))
+	fee, err = estimateFee(&stream.HLSSegment{Duration: 2.0}, []ffmpeg.VideoProfile{}, big.NewRat(1, 1), sourceResolution)
 	assert.Nil(err)
 	assert.Zero(fee.Cmp(big.NewRat(0, 1)))
 
 	// Test estimation with 1 profile
 	profiles = []ffmpeg.VideoProfile{ffmpeg.P144p30fps16x9}
 	priceInfo := big.NewRat(3, 1)
-	// pixels = 256 * 144 * 30 * 2
-	expFee := new(big.Rat).SetInt64(2211840)
+	// pixels = 256 * 144 * 30 * 2 + (1920 * 1080 * 12 * 2)
+	expFee := new(big.Rat).SetInt64(51978240)
 	expFee.Mul(expFee, new(big.Rat).SetFloat64(pixelEstimateMultiplier))
 	expFee.Mul(expFee, priceInfo)
-	fee, err = estimateFee(&stream.HLSSegment{Duration: 2.0}, profiles, priceInfo)
+	fee, err = estimateFee(&stream.HLSSegment{Duration: 2.0}, profiles, priceInfo, sourceResolution)
 	assert.Nil(err)
 	assert.Zero(fee.Cmp(expFee))
 
 	// Test estimation with 2 profiles
 	profiles = []ffmpeg.VideoProfile{ffmpeg.P144p30fps16x9, ffmpeg.P240p30fps16x9}
-	// pixels = (256 * 144 * 30 * 2) + (426 * 240 * 30 * 2)
-	expFee = new(big.Rat).SetInt64(8346240)
+	// pixels = (256 * 144 * 30 * 2) + (426 * 240 * 30 * 2) + (1920 * 1080 * 12 * 2)
+	expFee = new(big.Rat).SetInt64(58112640)
 	expFee.Mul(expFee, new(big.Rat).SetFloat64(pixelEstimateMultiplier))
 	expFee.Mul(expFee, priceInfo)
-	fee, err = estimateFee(&stream.HLSSegment{Duration: 2.0}, profiles, priceInfo)
+	fee, err = estimateFee(&stream.HLSSegment{Duration: 2.0}, profiles, priceInfo, sourceResolution)
 	assert.Nil(err)
 	assert.Zero(fee.Cmp(expFee))
 
 	// Test estimation with non-integer duration
-	// pixels = (256 * 144 * 30 * 3) + (426 * 240 * 30 * 3)
-	expFee = new(big.Rat).SetInt64(12519360)
+	// pixels = (256 * 144 * 30 * 3) + (426 * 240 * 30 * 3) + (1920 * 1080 * 12 * 3)
+	expFee = new(big.Rat).SetInt64(87168960)
 	expFee.Mul(expFee, new(big.Rat).SetFloat64(pixelEstimateMultiplier))
 	expFee.Mul(expFee, priceInfo)
 	// Calculations should take ceiling of duration i.e. 2.2 -> 3
-	fee, err = estimateFee(&stream.HLSSegment{Duration: 2.2}, profiles, priceInfo)
+	fee, err = estimateFee(&stream.HLSSegment{Duration: 2.2}, profiles, priceInfo, sourceResolution)
 	assert.Nil(err)
 	assert.Zero(fee.Cmp(expFee))
 
 	// Test estimation with fps pass-through
-	// pixels = (256 * 144 * 120 * 3) + (426 * 240 * 30 * 3)
+	// pixels = (256 * 144 * 120 * 3) + (426 * 240 * 30 * 3) + (1920 * 1080 * 12 * 3)
 	profiles[0].Framerate = 0
-	expFee = new(big.Rat).SetInt64(22472640)
+	expFee = new(big.Rat).SetInt64(124727040)
 	expFee.Mul(expFee, new(big.Rat).SetFloat64(pixelEstimateMultiplier))
 	expFee.Mul(expFee, priceInfo)
-	fee, err = estimateFee(&stream.HLSSegment{Duration: 3.0}, profiles, priceInfo)
+	fee, err = estimateFee(&stream.HLSSegment{Duration: 3.0}, profiles, priceInfo, sourceResolution)
 	assert.Nil(err)
 	assert.Zero(fee.Cmp(expFee))
 	assert.Equal(uint(0), profiles[0].Framerate, "Profile framerate was reset")
 
 	// Test estimation with non-integer fps
-	// pixels = (256 * 144 * ceil(30000/1001) * 3) + (426 * 240 * 30 * 3)
+	// pixels = (256 * 144 * ceil(30000/1001) * 3) + (426 * 240 * 30 * 3) + (1920 * 1080 * 12 * 3)
 	// Calculations should take ceiling of fps i.e. 29.97 -> 30
 	profiles[0].Framerate = 30000
 	profiles[0].FramerateDen = 1001
-	expFee = new(big.Rat).SetInt64(12519360)
+	expFee = new(big.Rat).SetInt64(87168960)
 	expFee.Mul(expFee, new(big.Rat).SetFloat64(pixelEstimateMultiplier))
 	expFee.Mul(expFee, priceInfo)
-	fee, err = estimateFee(&stream.HLSSegment{Duration: 3.0}, profiles, priceInfo)
+	fee, err = estimateFee(&stream.HLSSegment{Duration: 3.0}, profiles, priceInfo, sourceResolution)
 	assert.Nil(err)
 	assert.Zero(fee.Cmp(expFee))
 }
@@ -447,7 +448,7 @@ func TestEstimateFee(t *testing.T) {
 func TestNewBalanceUpdate(t *testing.T) {
 	mid := core.RandomManifestID()
 	s := &BroadcastSession{
-		Params:      &core.StreamParameters{ManifestID: mid},
+		Params:      &core.StreamParameters{ManifestID: mid, Resolution: "1920x1080"},
 		PMSessionID: "foo",
 	}
 
@@ -538,7 +539,7 @@ func TestGenPayment(t *testing.T) {
 
 	s := &BroadcastSession{
 		Broadcaster:      b,
-		Params:           &core.StreamParameters{ManifestID: mid},
+		Params:           &core.StreamParameters{ManifestID: mid, Resolution: "1920x1080"},
 		OrchestratorInfo: oinfo,
 		PMSessionID:      "foo",
 	}
@@ -680,7 +681,7 @@ func TestValidatePrice(t *testing.T) {
 
 	s := &BroadcastSession{
 		Broadcaster:      b,
-		Params:           &core.StreamParameters{ManifestID: mid},
+		Params:           &core.StreamParameters{ManifestID: mid, Resolution: "1920x1080"},
 		OrchestratorInfo: oinfo,
 		PMSessionID:      "foo",
 	}
@@ -1166,7 +1167,7 @@ func TestGenVerify_RoundTrip_AuthToken(t *testing.T) {
 		}
 		orch.authToken = authToken
 
-		creds, err := genSegCreds(sess, &stream.HLSSegment{}, nil, false, "0x0")
+		creds, err := genSegCreds(sess, &stream.HLSSegment{}, nil, false)
 		assert.Nil(err)
 		md, _, err := verifySegCreds(context.TODO(), orch, creds, ethcommon.Address{})
 		assert.Nil(err)
@@ -1195,7 +1196,7 @@ func TestGenVerify_RoundTrip_Capabilities(t *testing.T) {
 			OrchestratorInfo: &net.OrchestratorInfo{AuthToken: orch.AuthToken("bar", time.Now().Add(1*time.Hour).Unix())},
 		}
 		orch.caps = sess.Params.Capabilities
-		creds, err := genSegCreds(sess, &stream.HLSSegment{}, nil, false, "0x0")
+		creds, err := genSegCreds(sess, &stream.HLSSegment{}, nil, false)
 		assert.Nil(err)
 		md, _, err := verifySegCreds(context.TODO(), orch, creds, ethcommon.Address{})
 		assert.Equal(sess.Params.Capabilities, md.Caps)
@@ -1216,7 +1217,7 @@ func TestGenVerify_RoundTrip_Duration(t *testing.T) {
 		randDur := rapid.IntRange(1, int(common.MaxDuration.Milliseconds())).Draw(t, "dur").(int)
 		dur := time.Duration(randDur * int(time.Millisecond))
 		seg := &stream.HLSSegment{Duration: dur.Seconds()}
-		creds, err := genSegCreds(sess, seg, nil, false, "0x0")
+		creds, err := genSegCreds(sess, seg, nil, false)
 		assert.Nil(err)
 
 		md, _, err := verifySegCreds(context.TODO(), orch, creds, ethcommon.Address{})

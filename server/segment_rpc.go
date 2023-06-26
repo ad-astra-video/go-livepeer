@@ -185,8 +185,6 @@ func (h *lphttp) ServeSegment(w http.ResponseWriter, r *http.Request) {
 	// Upload to OS and construct segment result set
 	var segments []*net.TranscodedSegmentData
 	var pixels int64
-	//TODO: FPS not determined for input, use lowest reasonable fps
-	pixels += calcInputPixels(segData.Resolution, 24, int(segData.Duration.Seconds()))
 
 	for i := 0; err == nil && i < len(res.TranscodeData.Segments); i++ {
 		var ext string
@@ -220,6 +218,12 @@ func (h *lphttp) ServeSegment(w http.ResponseWriter, r *http.Request) {
 			d.PerceptualHashUrl = pHashUri
 		}
 		segments = append(segments, d)
+	}
+
+	//if no pixels returned, do not bill for input pixels
+	if pixels > 0 {
+		//TODO: FPS not determined for input, use same as estimate (120 fps / 10)
+		pixels += calcInputPixels(segData.Resolution, 12, int(segData.Duration.Seconds()))
 	}
 
 	// Debit the fee for the total pixel count
@@ -716,7 +720,7 @@ func estimateFee(seg *stream.HLSSegment, profiles []ffmpeg.VideoProfile, priceIn
 		return nil, nil
 	}
 	defFPS := uint(120)
-	inputPixels := calcInputPixels(resolution, defFPS, int(seg.Duration))
+	inputPixels := calcInputPixels(resolution, defFPS/10, int(seg.Duration)) //decoding is less resource intensive, using lower default FPS
 
 	// TODO: Estimate the number of input pixels
 	// Estimate the number of output pixels
