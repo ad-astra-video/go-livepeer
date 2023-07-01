@@ -7,7 +7,6 @@ import (
 	"math/rand"
 
 	ethcommon "github.com/ethereum/go-ethereum/common"
-	"github.com/golang/glog"
 	"github.com/livepeer/go-livepeer/clog"
 	"github.com/livepeer/go-livepeer/common"
 )
@@ -146,9 +145,6 @@ func (s *MinLSSelector) Select(ctx context.Context) (*BroadcastSession, string) 
 		return s.selectUnknownSession(ctx)
 	}
 
-	//broadcaster introspection
-	session := sess.(*BroadcastSession)
-	glog.Infof("%v Selected orchestrator reason=performance, known session", session.LogInfo())
 	return heap.Pop(s.knownSessions).(*BroadcastSession), "performance, known session"
 }
 
@@ -167,6 +163,7 @@ func (s *MinLSSelector) Clear() {
 // Use stake weighted random selection to select from unknownSessions
 func (s *MinLSSelector) selectUnknownSession(ctx context.Context) (*BroadcastSession, string) {
 	if len(s.unknownSessions) == 0 {
+		//broadcaster introspection
 		return nil, "no unknown sessions"
 	}
 
@@ -174,6 +171,7 @@ func (s *MinLSSelector) selectUnknownSession(ctx context.Context) (*BroadcastSes
 		// Sessions are selected based on the order of unknownSessions in off-chain mode
 		sess := s.unknownSessions[0]
 		s.unknownSessions = s.unknownSessions[1:]
+		//broadcaster introspection
 		return sess, "selected first in list (offchain mode)"
 	}
 
@@ -267,15 +265,15 @@ func (s *LIFOSelector) Complete(sess *BroadcastSession) {
 }
 
 // Select returns the last session in the selector's list
-func (s *LIFOSelector) Select(ctx context.Context) *BroadcastSession {
+func (s *LIFOSelector) Select(ctx context.Context) (*BroadcastSession, string) {
 	sessList := *s
 	last := len(sessList) - 1
 	if last < 0 {
-		return nil
+		return nil, "no sessions available"
 	}
 	sess, sessions := sessList[last], sessList[:last]
 	*s = sessions
-	return sess
+	return sess, "last session in list"
 }
 
 // Size returns the number of sessions stored by the selector
