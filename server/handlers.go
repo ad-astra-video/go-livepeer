@@ -187,6 +187,7 @@ func getBroadcastConfigHandler() http.Handler {
 		config := struct {
 			MaxPrice           *big.Rat
 			TranscodingOptions string
+
 		}{
 			BroadcastCfg.MaxPrice(),
 			strings.Join(pNames, ","),
@@ -205,6 +206,28 @@ func getAvailableTranscodingOptionsHandler() http.Handler {
 
 		respondJson(w, transcodingOptions)
 	})
+}
+
+func (s* LivepeerServer) getSessionPoolInfoHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.LivepeerNode.NodeType == core.BroadcasterNode {
+			cxn_session_pools := make(map[string]map[string]interface{})
+			for _, cxn := range s.rtmpConnections {
+				if cxn.pl == nil {
+					continue
+				}
+				cpl := cxn.pl
+				mid := string(cpl.ManifestID())
+				session_pool := make(map[string]interface{})
+				session_pool["trusted"] = s.rtmpConnections[cpl.ManifestID()].sessManager.trustedPool.sessMap
+				session_pool["untrusted"] = s.rtmpConnections[cpl.ManifestID()].sessManager.untrustedPool.sessMap
+				cxn_session_pools[mid] = session_pool
+			}
+			
+			respondJson(w, cxn_session_pools)
+		}
+	})
+
 }
 
 // Rounds
