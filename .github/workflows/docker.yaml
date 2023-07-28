@@ -5,6 +5,8 @@ on:
   push:
     branches:
       - master
+      - "av/*"
+      - "broadcaster-test*"
     tags:
       - "v*"
 
@@ -73,7 +75,7 @@ jobs:
         uses: docker/metadata-action@v4
         with:
           images: |
-            livepeer/go-livepeer
+            ad-astra-video/go-livepeer
             ghcr.io/${{ github.repository }}
           tags: |
             type=sha
@@ -94,7 +96,7 @@ jobs:
         uses: docker/metadata-action@v4
         with:
           images: |
-            livepeerci/build
+            ad-astra-video/build-livepeer
             ghcr.io/${{ github.repository }}/build
           tags: |
             type=sha
@@ -137,5 +139,5 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           file: 'docker/Dockerfile'
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=registry,ref=livepeerci/build:cache
-          cache-to: type=registry,ref=livepeerci/build:cache,mode=max
+          cache-from: type=registry,ref=ad-astra-video/build-livepeer:cache
+          cache-to: type=registry,ref=ad-astra-video/build-livepeer:cache,mode=max
