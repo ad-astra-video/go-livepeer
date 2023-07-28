@@ -485,6 +485,16 @@ func StartLivepeer(ctx context.Context, cfg LivepeerConfig) {
 		if !*cfg.Transcoder {
 			n.TranscoderManager = core.NewRemoteTranscoderManager()
 			n.Transcoder = n.TranscoderManager
+			//set up transcoder secrets
+			t_err := n.GetTranscoderSecrets()
+			if t_err == nil {
+				for k, v := range n.TranscoderManager.TranscoderSecrets() {
+					glog.Infof("TranscoderSecret loaded:  %s  active: %t", k, v)
+				}
+			} else {
+				glog.Errorf("Error getting TranscoderSecrets: %s", t_err)
+			}
+
 		}
 	} else if *cfg.Transcoder {
 		n.NodeType = core.TranscoderNode
