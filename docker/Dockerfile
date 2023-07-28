@@ -45,7 +45,7 @@ RUN	mkdir -p /go \
 
 COPY	./install_ffmpeg.sh	./install_ffmpeg.sh
 
-ARG	BUILD_TAGS
+ARG	BUILD_TAGS=mainnet
 ENV	BUILD_TAGS=${BUILD_TAGS}
 
 COPY	go.mod	go.sum	./
