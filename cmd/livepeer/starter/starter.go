@@ -516,6 +516,16 @@ func StartLivepeer(ctx context.Context, cfg LivepeerConfig) {
 		if !*cfg.Transcoder {
 			n.TranscoderManager = core.NewRemoteTranscoderManager()
 			n.Transcoder = n.TranscoderManager
+			//set up transcoder secrets
+			t_err := n.GetTranscoderSecrets()
+			if t_err == nil {
+				for k, v := range n.TranscoderManager.TranscoderSecrets() {
+					glog.Infof("TranscoderSecret loaded:  %s  active: %t", k, v)
+				}
+			} else {
+				glog.Errorf("Error getting TranscoderSecrets: %s", t_err)
+			}
+
 		}
 	} else if *cfg.Transcoder {
 		n.NodeType = core.TranscoderNode
@@ -1148,7 +1158,7 @@ func StartLivepeer(ctx context.Context, cfg LivepeerConfig) {
 		// if http addr is not provided, listen to all ifaces
 		// take the port to listen to from the service URI
 		*cfg.HttpAddr = defaultAddr(*cfg.HttpAddr, "", n.GetServiceURI().Port())
-		if !*cfg.Transcoder && n.OrchSecret == "" {
+		if !*cfg.Transcoder && len(n.OrchSecret) == 0 {
 			glog.Fatal("Running an orchestrator requires an -orchSecret for standalone mode or -transcoder for orchestrator+transcoder mode")
 		}
 	} else if n.NodeType == core.TranscoderNode {
@@ -1238,7 +1248,7 @@ func StartLivepeer(ctx context.Context, cfg LivepeerConfig) {
 	}()
 
 	if n.NodeType == core.TranscoderNode {
-		if n.OrchSecret == "" {
+		if len(n.OrchSecret) == 0 {
 			glog.Fatal("Missing -orchSecret")
 		}
 		if len(orchURLs) <= 0 {
