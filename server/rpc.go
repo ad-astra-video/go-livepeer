@@ -125,6 +125,12 @@ func (bs *BroadcastSession) Transcoder() string {
 	return bs.OrchestratorInfo.Transcoder
 }
 
+func (bs *BroadcastSession) SetTranscoder(url string) {
+	bs.lock.RLock()
+	defer bs.lock.RUnlock()
+	bs.OrchestratorInfo.Transcoder = url
+}
+
 func (bs *BroadcastSession) Address() string {
 	bs.lock.RLock()
 	defer bs.lock.RUnlock()
