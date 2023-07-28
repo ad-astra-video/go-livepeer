@@ -106,7 +106,13 @@ func (o *orchestratorPool) GetOrchestrators(ctx context.Context, numOrchestrator
 		return caps.CompatibleWith(info.Capabilities)
 	}
 	getOrchInfo := func(ctx context.Context, od common.OrchestratorDescriptor, infoCh chan common.OrchestratorDescriptor, errCh chan error) {
+		started := time.Now()
 		info, err := serverGetOrchInfo(ctx, o.bcast, od.LocalInfo.URL)
+		if err == nil {
+			if monitor.Enabled {
+				monitor.LogDiscoveryLatency(ctx, info.GetTicketParams().Recipient, od.LocalInfo.URL.String(), info.GetTranscoder(), time.Since(started).Seconds())
+			}
+		}
 		if err == nil && !isBlacklisted(info) && isCompatible(info) {
 			od.RemoteInfo = info
 			infoCh <- od
