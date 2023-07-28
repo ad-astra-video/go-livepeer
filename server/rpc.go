@@ -48,14 +48,13 @@ var discoveryAuthWebhookCache = cache.New(authTokenValidPeriod, discoveryAuthWeb
 type Orchestrator interface {
 	ServiceURI() *url.URL
 	Address() ethcommon.Address
-	TranscoderSecret() string
 	Sign([]byte) ([]byte, error)
 	VerifySig(ethcommon.Address, string, []byte) bool
 	CheckCapacity(core.ManifestID) error
 	CheckAICapacity(pipeline, modelID string) (bool, chan<- bool)
 	GetLiveAICapacity() worker.Capacity
 	TranscodeSeg(context.Context, *core.SegTranscodingMetadata, *stream.HLSSegment) (*core.TranscodeResult, error)
-	ServeTranscoder(stream net.Transcoder_RegisterTranscoderServer, capacity int, capabilities *net.Capabilities)
+	ServeTranscoder(stream net.Transcoder_RegisterTranscoderServer, capacity int, capabilities *net.Capabilities, secret string)
 	TranscoderResults(job int64, res *core.RemoteTranscoderResult)
 	ServeAIWorker(stream net.AIWorker_RegisterAIWorkerServer, capabilities *net.Capabilities, hardware []*net.HardwareInformation)
 	AIResults(job int64, res *core.RemoteAIWorkerResult)
