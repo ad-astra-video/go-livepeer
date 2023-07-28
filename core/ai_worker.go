@@ -60,6 +60,8 @@ type RemoteAIWorkerManager struct {
 
 	// Map for keeping track of sessions and their respective aiworkers
 	requestSessions map[string]*RemoteAIWorker
+
+	workerSecrets map[string]bool
 }
 
 func NewRemoteAIWorker(m *RemoteAIWorkerManager, stream net.AIWorker_RegisterAIWorkerServer, caps *Capabilities) *RemoteAIWorker {
@@ -82,6 +84,8 @@ func NewRemoteAIWorkerManager() *RemoteAIWorkerManager {
 		taskChans: make(map[int64]AIWorkerChan),
 
 		requestSessions: make(map[string]*RemoteAIWorker),
+
+		workerSecrets: make(map[string]bool),
 	}
 }
 
@@ -130,6 +134,16 @@ func (rwm *RemoteAIWorkerManager) Manage(stream net.AIWorker_RegisterAIWorkerSer
 	rwm.RWmutex.Lock()
 	delete(rwm.liveAIWorkers, aiworker.stream)
 	rwm.RWmutex.Unlock()
+}
+
+func (rtm *RemoteAIWorkerManager) CheckWorkerSecret(secret string) (bool, bool) {
+	is_active, ok := rtm.workerSecrets[secret]
+	if ok {
+		return is_active, ok
+	} else {
+		glog.V(common.DEBUG).Infof("Worker secret %s not active", secret)
+		return false, ok
+	}
 }
 
 // RemoteAIworkerFatalError wraps error to indicate that error is fatal
