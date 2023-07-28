@@ -406,6 +406,28 @@ func (s *LivepeerServer) getAIPoolsInfoHandler() http.Handler {
 	})
 }
 
+func (s *LivepeerServer) getSessionPoolInfoHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.LivepeerNode.NodeType == core.BroadcasterNode {
+			cxn_session_pools := make(map[string]map[string]interface{})
+			for _, cxn := range s.rtmpConnections {
+				if cxn.pl == nil {
+					continue
+				}
+				cpl := cxn.pl
+				mid := string(cpl.ManifestID())
+				session_pool := make(map[string]interface{})
+				session_pool["trusted"] = s.rtmpConnections[cpl.ManifestID()].sessManager.trustedPool.sessMap
+				session_pool["untrusted"] = s.rtmpConnections[cpl.ManifestID()].sessManager.untrustedPool.sessMap
+				cxn_session_pools[mid] = session_pool
+			}
+
+			respondJson(w, cxn_session_pools)
+		}
+	})
+
+}
+
 // Rounds
 func currentRoundHandler(client eth.LivepeerEthClient) http.Handler {
 	return mustHaveClient(client, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1677,7 +1699,7 @@ func isL1Network(db ChainIdGetter) (bool, error) {
 	return chainId.Int64() == MainnetChainId || chainId.Int64() == RinkebyChainId, err
 }
 
-//set remote transcoder info
+// set remote transcoder info
 func (s *LivepeerServer) setTranscoderSortMethodHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.LivepeerNode.NodeType == core.OrchestratorNode {
@@ -1781,7 +1803,7 @@ func (s *LivepeerServer) deactivateTranscoderSecretHandler() http.Handler {
 			if secret == "" {
 				respond400(w, "need to set secret")
 			}
-		
+
 			s.LivepeerNode.UpdateTranscoderSecret(secret, false)
 			glog.Infof("Transcoder secret deactivated: %v", secret)
 			respondOk(w, []byte(""))
