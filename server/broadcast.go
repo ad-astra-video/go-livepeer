@@ -459,6 +459,7 @@ func NewSessionManager(ctx context.Context, node *core.LivepeerNode, params *cor
 	}
 	bsm.trustedPool.refreshSessions(ctx)
 	bsm.untrustedPool.refreshSessions(ctx)
+	clog.V(common.DEBUG).Infof(ctx, "New session manager created: trustedPoolSize=%v, untrustedPoolSize=%v", len(bsm.trustedPool.sessMap), len(bsm.untrustedPool.sessMap))
 	return bsm
 }
 
@@ -491,6 +492,44 @@ func (bs *BroadcastSession) pushSegInFlight(seg *stream.HLSSegment) {
 			segDur:    time.Duration(seg.Duration * float64(time.Second)),
 		})
 	bs.lock.Unlock()
+}
+
+// selects broadcast sessions for specified orchestrator
+func (bsm *BroadcastSessionsManager) selectSessionsManual(ctx context.Context, orchAddr string) (bs []*BroadcastSession, calcPerceptualHash bool, verified bool) {
+	bsm.sessLock.Lock()
+	defer bsm.sessLock.Unlock()
+	clog.V(common.DEBUG).Infof(ctx, "Searching %v trusted and %v untrusted seesions for orchAddr=%v", len(bsm.trustedPool.sessMap), len(bsm.untrustedPool.sessMap), orchAddr)
+	var sessions []*BroadcastSession 
+	orchEthAddr := ethcommon.HexToAddress(orchAddr)
+	
+	for url, sess := range bsm.trustedPool.sessMap {
+		sessEthAddr := ethcommon.BytesToAddress(sess.OrchestratorInfo.GetTicketParams().Recipient)
+		if bytes.Compare(orchEthAddr.Bytes(), sessEthAddr.Bytes()) == 0 {
+			sessions = append(sessions, sess)
+			clog.Infof(ctx, "Trusted session matched eth address %v", orchAddr)
+		} else if url == orchAddr {
+			sessions = append(sessions, sess)
+			clog.Infof(ctx, "Trusted session matched url %v", orchAddr)
+		} else {
+			
+			clog.Infof(ctx, "Trusted session did not match orchAddr: %v, session url: %v, session eth address %v", orchAddr, url, sessEthAddr.Hex())
+		}
+	}
+	for url, sess := range bsm.untrustedPool.sessMap {
+		sessEthAddr := ethcommon.BytesToAddress(sess.OrchestratorInfo.GetTicketParams().Recipient)
+		if bytes.Compare(orchEthAddr.Bytes(), sessEthAddr.Bytes()) == 0 {
+			sessions = append(sessions, sess)
+			clog.Infof(ctx, "Untrusted session matched eth address %v", orchAddr)
+		} else if url == orchAddr {
+			sessions = append(sessions, sess)
+			clog.Infof(ctx, "Untrusted session matched url %v", orchAddr)
+		} else {
+			sessEthAddr := ethcommon.BytesToAddress(sess.OrchestratorInfo.GetAddress())
+			clog.Infof(ctx, "Untrusted session did not match orchAddr: %v, session url: %v, session eth address %v", orchAddr, url, sessEthAddr.Hex())
+		}
+	}
+	clog.V(common.DEBUG).Infof(ctx, "Returning %v sessions with orchAddr=%v", len(sessions), orchAddr)
+	return sessions, false, true
 }
 
 // selects number of sessions to use according to current algorithm
@@ -826,7 +865,7 @@ func selectOrchestrator(ctx context.Context, n *core.LivepeerNode, params *core.
 	return sessions, nil
 }
 
-func processSegment(ctx context.Context, cxn *rtmpConnection, seg *stream.HLSSegment, segPar *core.SegmentParameters) ([]string, error) {
+func processSegment(ctx context.Context, cxn *rtmpConnection, seg *stream.HLSSegment, segPar *core.SegmentParameters, orchAddr string) ([]string, error) {
 
 	rtmpStrm := cxn.stream
 	nonce := cxn.nonce
@@ -945,7 +984,7 @@ func processSegment(ctx context.Context, cxn *rtmpConnection, seg *stream.HLSSeg
 	for len(attempts) < MaxAttempts {
 		// if transcodeSegment fails, retry; rudimentary
 		var info *data.TranscodeAttemptInfo
-		urls, info, err = transcodeSegment(ctx, cxn, seg, name, sv, segPar)
+		urls, info, err = transcodeSegment(ctx, cxn, seg, name, sv, segPar, orchAddr)
 		attempts = append(attempts, *info)
 		if err == nil {
 			break
@@ -1000,7 +1039,7 @@ func processSegment(ctx context.Context, cxn *rtmpConnection, seg *stream.HLSSeg
 }
 
 func transcodeSegment(ctx context.Context, cxn *rtmpConnection, seg *stream.HLSSegment, name string,
-	verifier *verification.SegmentVerifier, segPar *core.SegmentParameters) ([]string, *data.TranscodeAttemptInfo, error) {
+	verifier *verification.SegmentVerifier, segPar *core.SegmentParameters, orchAddr string) ([]string, *data.TranscodeAttemptInfo, error) {
 
 	var urls []string
 	info := &data.TranscodeAttemptInfo{}
@@ -1015,7 +1054,17 @@ func transcodeSegment(ctx context.Context, cxn *rtmpConnection, seg *stream.HLSS
 	}(time.Now())
 
 	nonce := cxn.nonce
-	sessions, calcPerceptualHash, verified := cxn.sessManager.selectSessions(ctx)
+	var sessions []*BroadcastSession
+	var calcPerceptualHash bool
+	var verified bool
+
+	clog.Infof(ctx, "Selection sessions, orchAddr=%v", orchAddr)
+
+	if orchAddr != "" {
+		sessions, calcPerceptualHash, verified = cxn.sessManager.selectSessionsManual(ctx, orchAddr)	
+	} else {
+		sessions, calcPerceptualHash, verified = cxn.sessManager.selectSessions(ctx)
+	}
 	// Return early under a few circumstances:
 	// View-only (non-transcoded) streams or no sessions available
 	if len(sessions) == 0 {
