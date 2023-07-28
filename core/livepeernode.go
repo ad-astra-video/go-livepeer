@@ -233,3 +233,27 @@ func (n *LivepeerNode) GetCurrentCapacity() int {
 	_, totalCapacity, _ := n.TranscoderManager.totalLoadAndCapacity()
 	return totalCapacity
 }
+
+func (n* LivepeerNode) GetTranscoderSecrets() error {
+	n.TranscoderManager.RTmutex.Lock()
+	defer n.TranscoderManager.RTmutex.Unlock()
+	secrets, err := n.Database.GetTranscoderSecrets()
+	//include OrchSecret
+	n.TranscoderManager.transcoderSecrets[n.OrchSecret] = true
+	//get other transcoder secrets
+	if err == nil {
+		for k, v := range secrets {
+			n.TranscoderManager.transcoderSecrets[k] = v
+		}
+		return nil
+	} else {
+		return err
+	}
+}
+
+func (n* LivepeerNode) UpdateTranscoderSecret(secret string, active bool) {
+	n.TranscoderManager.RTmutex.Lock()
+	defer n.TranscoderManager.RTmutex.Unlock()
+	n.Database.UpdateTranscoderSecret(secret, active)
+	n.TranscoderManager.transcoderSecrets[secret] = active
+}
