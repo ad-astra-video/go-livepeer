@@ -33,13 +33,18 @@ jobs:
 
       - name: Cleanup hosted runner
         run: |
+          df -h
           sudo rm -rf /usr/share/dotnet
+          df -h
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+          df -h
           sudo apt purge -yqq dotnet-* mono-* llvm-* adoptopenjdk-* libllvm* powershell* openjdk-* \
           temurin-* mongodb-* firefox mysql-* \
           hhvm google-chrome-stable \
           libgl1-mesa-dri microsoft-edge-stable \
           google-cloud-sdk azure-cli
           sudo apt autoremove -y
+          df -h
 
       - uses: actions-ecosystem/action-regex-match@v2
         id: match-tag
@@ -97,7 +102,7 @@ jobs:
         uses: docker/metadata-action@v4
         with:
           images: |
-            0xb79orch/build-livepeer
+            0xb79orch/build
             ghcr.io/${{ github.repository }}/build
           tags: |
             type=sha
@@ -140,5 +145,5 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           file: 'docker/Dockerfile'
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=registry,ref=0xb79orch/build-livepeer:cache
-          cache-to: type=registry,ref=0xb79orch/build-livepeer:cache,mode=max
+          cache-from: type=registry,ref=0xb79orch/build:cache
+          cache-to: type=registry,ref=0xb79orch/build:cache,mode=max
