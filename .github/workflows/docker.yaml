@@ -33,14 +33,13 @@ jobs:
 
       - name: Cleanup hosted runner
         run: |
+          sudo rm -rf /usr/share/dotnet
           sudo apt purge -yqq dotnet-* mono-* llvm-* adoptopenjdk-* libllvm* powershell* openjdk-* \
           temurin-* mongodb-* firefox mysql-* \
           hhvm google-chrome-stable \
           libgl1-mesa-dri microsoft-edge-stable \
           google-cloud-sdk azure-cli
           sudo apt autoremove -y
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
 
       - uses: actions-ecosystem/action-regex-match@v2
         id: match-tag
