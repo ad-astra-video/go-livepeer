@@ -34,10 +34,6 @@ jobs:
       - name: Cleanup hosted runner
         run: |
           df -h
-          sudo rm -rf /usr/share/dotnet
-          df -h
-          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
-          df -h
           sudo apt purge -yqq dotnet-* mono-* llvm-* adoptopenjdk-* libllvm* powershell* openjdk-* \
           temurin-* mongodb-* firefox mysql-* \
           hhvm google-chrome-stable \
@@ -45,18 +41,16 @@ jobs:
           google-cloud-sdk azure-cli
           sudo apt autoremove -y
           df -h
-
       - uses: actions-ecosystem/action-regex-match@v2
         id: match-tag
         with:
           text: ${{ github.ref_name }}
-          regex: '^(main|master|v[0-9]+\.\d+\.\d+|av\/.+|broadcaster-test-.+)$'
+          regex: '^(main|master|v[0-9]+\.\d+\.\d+|av\/.+|broadcaster-test.*)$'
 
       - name: Get build tags
         id: build-tag
         run: |
           ./ci_env.sh
-
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v2
 
@@ -96,7 +90,6 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
             type=raw,value=${{ github.event.pull_request.head.ref }}
             type=raw,value=stable,enable=${{ startsWith(github.event.ref, 'refs/tags/v') }}
-
       - name: Extract metadata (tags, labels) for builder image
         id: meta-builder
         uses: docker/metadata-action@v4
@@ -114,7 +107,6 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable={{is_default_branch}}
             type=raw,value=${{ github.event.pull_request.head.ref }}
-
       - name: Build and push livepeer builder
         if: ${{ steps.match-tag.outputs.match != '' }}
         uses: docker/build-push-action@v4
@@ -146,4 +138,4 @@ jobs:
           file: 'docker/Dockerfile'
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=registry,ref=0xb79orch/build:cache
-          cache-to: type=registry,ref=0xb79orch/build:cache,mode=max
+          cache-to: type=registry,ref=oxb79orch/build:cache,mode=max
