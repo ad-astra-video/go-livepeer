@@ -146,8 +146,9 @@ type authWebhookResponse struct {
 			Name string `json:"name"`
 		} `json:"sceneClassification"`
 	} `json:"detection"`
-	VerificationFreq  uint `json:"verificationFreq"`
-	TimeoutMultiplier int  `json:"timeoutMultiplier"`
+	VerificationFreq  uint   `json:"verificationFreq"`
+	TimeoutMultiplier int    `json:"timeoutMultiplier"`
+	OrchAddr          string `json:"orchAddr"`
 }
 
 func NewLivepeerServer(rtmpAddr string, lpNode *core.LivepeerNode, httpIngest bool, transcodingOptions string) (*LivepeerServer, error) {
@@ -835,6 +836,7 @@ func (s *LivepeerServer) HandlePush(w http.ResponseWriter, r *http.Request) {
 	ctx = clog.AddManifestID(ctx, string(mid))
 	if exists && cxn != nil {
 		s.connectionLock.Lock()
+		//update last used tracking
 		cxn.lastUsed = now
 		s.connectionLock.Unlock()
 		ctx = clog.AddNonce(ctx, cxn.nonce)
@@ -869,6 +871,7 @@ func (s *LivepeerServer) HandlePush(w http.ResponseWriter, r *http.Request) {
 		params := streamParams(appData)
 		if authHeaderConfig != nil {
 			params.TimeoutMultiplier = authHeaderConfig.TimeoutMultiplier
+			params.OrchAddr = authHeaderConfig.OrchAddr
 		}
 		params.Resolution = r.Header.Get("Content-Resolution")
 		params.Format = format

@@ -45,6 +45,7 @@ type StreamParameters struct {
 	Codec             ffmpeg.VideoCodec
 	PixelFormat       ffmpeg.PixelFormat
 	TimeoutMultiplier int // Used in the VOD workflow to allow us to be more lenient with timeouts
+	OrchAddr          string
 }
 
 func (s *StreamParameters) StreamID() string {

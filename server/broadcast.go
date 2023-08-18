@@ -533,6 +533,43 @@ func (bsm *BroadcastSessionsManager) selectSessions(ctx context.Context) (bs []*
 	return sessions, false, verified
 }
 
+// selects broadcast sessions for specified orchestrator
+func (bsm *BroadcastSessionsManager) selectSessionsForSpecifiedOrch(ctx context.Context, orchAddr string) (bs []*BroadcastSession, calcPerceptualHash bool, verified bool) {
+	bsm.sessLock.Lock()
+	defer bsm.sessLock.Unlock()
+	clog.Infof(ctx, "Searching %v trusted and %v untrusted seesions for orchAddr=%v", len(bsm.trustedPool.sessMap), len(bsm.untrustedPool.sessMap), orchAddr)
+	var sessions []*BroadcastSession
+	orchEthAddr := ethcommon.HexToAddress(orchAddr)
+
+	for url, sess := range bsm.trustedPool.sessMap {
+		sessEthAddr := ethcommon.BytesToAddress(sess.OrchestratorInfo.GetTicketParams().Recipient)
+		if bytes.Compare(orchEthAddr.Bytes(), sessEthAddr.Bytes()) == 0 {
+			sessions = append(sessions, sess)
+			clog.Infof(ctx, "Trusted session matched eth address %v", orchAddr)
+		} else if url == orchAddr {
+			sessions = append(sessions, sess)
+			clog.Infof(ctx, "Trusted session matched url %v", orchAddr)
+		} else {
+			clog.V(common.DEBUG).Infof(ctx, "Trusted session did not match orchAddr: %v, session url: %v, session eth address %v", orchAddr, url, sessEthAddr.Hex())
+		}
+	}
+	for url, sess := range bsm.untrustedPool.sessMap {
+		sessEthAddr := ethcommon.BytesToAddress(sess.OrchestratorInfo.GetTicketParams().Recipient)
+		if bytes.Compare(orchEthAddr.Bytes(), sessEthAddr.Bytes()) == 0 {
+			sessions = append(sessions, sess)
+			clog.Infof(ctx, "Untrusted session matched eth address %v", orchAddr)
+		} else if url == orchAddr {
+			sessions = append(sessions, sess)
+			clog.Infof(ctx, "Untrusted session matched url %v", orchAddr)
+		} else {
+			sessEthAddr := ethcommon.BytesToAddress(sess.OrchestratorInfo.GetAddress())
+			clog.V(common.DEBUG).Infof(ctx, "Untrusted session did not match orchAddr: %v, session url: %v, session eth address %v", orchAddr, url, sessEthAddr.Hex())
+		}
+	}
+	clog.Infof(ctx, "Returning %v sessions with orchAddr=%v", len(sessions), orchAddr)
+	return sessions, false, true
+}
+
 func (bsm *BroadcastSessionsManager) cleanup(ctx context.Context) {
 	// send tear down signals to each orchestrator session to free resources
 	for _, sess := range bsm.untrustedPool.sessMap {
@@ -1010,7 +1047,19 @@ func transcodeSegment(ctx context.Context, cxn *rtmpConnection, seg *stream.HLSS
 	}(time.Now())
 
 	nonce := cxn.nonce
-	sessions, calcPerceptualHash, verified := cxn.sessManager.selectSessions(ctx)
+	var sessions []*BroadcastSession
+	var calcPerceptualHash bool
+	var verified bool
+	//If specific OrchAddr specified, try to select it first
+	if cxn.params.OrchAddr != "" {
+		sessions, calcPerceptualHash, verified = cxn.sessManager.selectSessionsForSpecifiedOrch(ctx, cxn.params.OrchAddr)
+		cxn.params.OrchAddr = "" //Specified orchestrator reset to allow fallback to other sessions
+	}
+
+	if len(sessions) == 0 {
+		sessions, calcPerceptualHash, verified = cxn.sessManager.selectSessions(ctx)
+	}
+
 	// Return early under a few circumstances:
 	// View-only (non-transcoded) streams or no sessions available
 	if len(sessions) == 0 {
