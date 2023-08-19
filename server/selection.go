@@ -3,6 +3,7 @@ package server
 import (
 	"container/heap"
 	"context"
+	"fmt"
 	"math/rand"
 
 	ethcommon "github.com/ethereum/go-ethereum/common"
@@ -168,6 +169,7 @@ func (s *MinLSSelector) selectUnknownSession(ctx context.Context) *BroadcastSess
 	if s.stakeRdr == nil {
 		// Sessions are selected based on the order of unknownSessions in off-chain mode
 		sess := s.unknownSessions[0]
+		sess.SelectedBy = "offchain mode, selected first available"
 		s.unknownSessions = s.unknownSessions[1:]
 		return sess
 	}
@@ -176,6 +178,7 @@ func (s *MinLSSelector) selectUnknownSession(ctx context.Context) *BroadcastSess
 	if rand.Float64() < s.randFreq {
 		i := rand.Intn(len(s.unknownSessions))
 		sess := s.unknownSessions[i]
+		sess.SelectedBy = fmt.Sprintf("random factor (%v, %d of %d orchestrators)", s.randFreq, i+1, len(s.unknownSessions))
 		s.removeUnknownSession(i)
 		return sess
 	}
@@ -230,6 +233,7 @@ func (s *MinLSSelector) selectUnknownSession(ctx context.Context) *BroadcastSess
 		stakes[addr] = 0
 
 		if r <= 0 {
+			sess.SelectedBy = fmt.Sprintf("stake (%d of %d orchestrators)", i+1, len(s.unknownSessions))
 			s.removeUnknownSession(i)
 			return sess
 		}
