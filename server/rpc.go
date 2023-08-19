@@ -110,6 +110,7 @@ type BroadcastSession struct {
 	Balances                 *core.AddressBalances
 	OrchestratorScore        float32
 	VerifiedByPerceptualHash bool
+	SelectedBy               string
 	lock                     *sync.RWMutex
 	// access these fields under the lock
 	SegsInFlight     []SegFlightMetadata
@@ -130,6 +131,12 @@ func (bs *BroadcastSession) Address() string {
 	bs.lock.RLock()
 	defer bs.lock.RUnlock()
 	return hexutil.Encode(bs.OrchestratorInfo.Address)
+}
+
+func (bs *BroadcastSession) RecipientAddress() string {
+	bs.lock.RLock()
+	defer bs.lock.RUnlock()
+	return hexutil.Encode(bs.OrchestratorInfo.TicketParams.Recipient)
 }
 
 func (bs *BroadcastSession) Clone() *BroadcastSession {

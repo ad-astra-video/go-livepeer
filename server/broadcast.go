@@ -1011,6 +1011,7 @@ func transcodeSegment(ctx context.Context, cxn *rtmpConnection, seg *stream.HLSS
 
 	nonce := cxn.nonce
 	sessions, calcPerceptualHash, verified := cxn.sessManager.selectSessions(ctx)
+
 	// Return early under a few circumstances:
 	// View-only (non-transcoded) streams or no sessions available
 	if len(sessions) == 0 {
@@ -1035,6 +1036,10 @@ func transcodeSegment(ctx context.Context, cxn *rtmpConnection, seg *stream.HLSS
 	if len(sessions) == 1 {
 		// shortcut for most common path
 		sess := sessions[0]
+		ctx = clog.AddVal(ctx, "ethaddress", sess.RecipientAddress())
+		ctx = clog.AddVal(ctx, "orchestrator", sess.Transcoder())
+		clog.PublicInfof(ctx, "Selected orchestrator reason=%v", sess.SelectedBy)
+
 		if seg, err = prepareForTranscoding(ctx, cxn, sess, seg, name); err != nil {
 			return nil, info, err
 		}
@@ -1144,6 +1149,9 @@ func transcodeSegment(ctx context.Context, cxn *rtmpConnection, seg *stream.HLSS
 		resc := make(chan *SubmitResult, len(sessions))
 		submittedCount := 0
 		for _, sess := range sessions {
+			ctx = clog.AddVal(ctx, "ethaddress", sess.RecipientAddress())
+			ctx = clog.AddVal(ctx, "orchestrator", sess.Transcoder())
+			clog.PublicInfof(ctx, "Selected orchestrator reason=%v", sess.SelectedBy)
 			// todo: run it in own goroutine (move to submitSegment?)
 			seg2, err := prepareForTranscoding(ctx, cxn, sess, seg, name)
 			if err != nil || seg2 == nil {
