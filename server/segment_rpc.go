@@ -419,7 +419,6 @@ func SubmitSegment(ctx context.Context, sess *BroadcastSession, seg *stream.HLSS
 		if sess.OrchestratorInfo.AuthToken != nil {
 			ctx = clog.AddOrchSessionID(ctx, sess.OrchestratorInfo.AuthToken.SessionId)
 		}
-		ctx = clog.AddVal(ctx, "orchestrator", sess.OrchestratorInfo.Transcoder)
 	}
 
 	segCreds, err := genSegCreds(sess, seg, segPar, calcPerceptualHash)
