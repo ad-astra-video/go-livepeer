@@ -216,15 +216,7 @@ func selectSession(ctx context.Context, sessions []*BroadcastSession, exclude []
 		// threshold is selectable
 		if len(session.SegsInFlight) == 0 {
 			if session.LatencyScore > 0 && session.LatencyScore <= SELECTOR_LATENCY_SCORE_THRESHOLD {
-				clog.PublicInfof(ctx,
-					"Selecting new orchestrator, reason=%v",
-					fmt.Sprintf(
-						"performance: no segments in flight, latency score of %v < %v",
-						session.LatencyScore,
-						durMult,
-					),
-				)
-
+				session.SelectedBy = fmt.Sprintf("performance: no segments in flight, latency score of %v < %v", session.LatencyScore, durMult)
 				return session
 			}
 		}
@@ -245,15 +237,7 @@ func selectSession(ctx context.Context, sessions []*BroadcastSession, exclude []
 			}
 
 			if timeInFlight < maxTimeInFlight {
-				clog.PublicInfof(ctx,
-					"Selected orchestrator reason=%v",
-					fmt.Sprintf(
-						"performance: segments in flight, latency score of %v < %v",
-						session.LatencyScore,
-						durMult,
-					),
-				)
-
+				session.SelectedBy = fmt.Sprintf("performance: segments in flight, latency score of %v < %v", session.LatencyScore, durMult)
 				return session
 			}
 		}
