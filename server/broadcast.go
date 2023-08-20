@@ -1013,7 +1013,6 @@ func transcodeSegment(ctx context.Context, cxn *rtmpConnection, seg *stream.HLSS
 		Address:       sessions[0].Address(),
 	}
 
-	clog.Infof(ctx, "Trying to transcode segment using sessions=%d", len(sessions))
 	if monitor.Enabled {
 		monitor.TranscodeTry(ctx, nonce, seg.SeqNo)
 	}
@@ -1023,7 +1022,7 @@ func transcodeSegment(ctx context.Context, cxn *rtmpConnection, seg *stream.HLSS
 		ctx = clog.AddVal(ctx, "ethaddress", sess.RecipientAddress())
 		ctx = clog.AddVal(ctx, "orchestrator", sess.Transcoder())
 		clog.PublicInfof(ctx, "Selected orchestrator reason=%v", sess.SelectedBy)
-
+		clog.PublicInfof(ctx, "Trying to transcode segment using session %d of %d", 1, len(sessions))
 		if seg, err = prepareForTranscoding(ctx, cxn, sess, seg, name); err != nil {
 			return nil, info, err
 		}
@@ -1132,10 +1131,11 @@ func transcodeSegment(ctx context.Context, cxn *rtmpConnection, seg *stream.HLSS
 	} else {
 		resc := make(chan *SubmitResult, len(sessions))
 		submittedCount := 0
-		for _, sess := range sessions {
+		for idx, sess := range sessions {
 			ctx = clog.AddVal(ctx, "ethaddress", sess.RecipientAddress())
 			ctx = clog.AddVal(ctx, "orchestrator", sess.Transcoder())
 			clog.PublicInfof(ctx, "Selected orchestrator reason=%v", sess.SelectedBy)
+			clog.PublicInfof(ctx, "Trying to transcode segment using session %d of %d", idx, len(sessions))
 			// todo: run it in own goroutine (move to submitSegment?)
 			seg2, err := prepareForTranscoding(ctx, cxn, sess, seg, name)
 			if err != nil || seg2 == nil {
