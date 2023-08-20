@@ -56,7 +56,8 @@ func StubBroadcastSession(transcoder string) *BroadcastSession {
 				PricePerUnit:  1,
 				PixelsPerUnit: 1,
 			},
-			AuthToken: stubAuthToken,
+			AuthToken:    stubAuthToken,
+			TicketParams: &net.TicketParams{Recipient: pm.RandAddress().Bytes()},
 		},
 		OrchestratorScore: common.Score_Trusted,
 		lock:              &sync.RWMutex{},
@@ -376,7 +377,7 @@ func TestSelectSession_MultipleInFlight2(t *testing.T) {
 			PricePerUnit:  1,
 			PixelsPerUnit: 1,
 		},
-		TicketParams: &net.TicketParams{},
+		TicketParams: &net.TicketParams{Recipient: pm.RandAddress().Bytes()},
 		AuthToken:    stubAuthToken,
 	}
 
@@ -402,8 +403,9 @@ func TestSelectSession_MultipleInFlight2(t *testing.T) {
 	balance.On("Credit", mock.Anything)
 	sess.Params.Profiles = []ffmpeg.VideoProfile{ffmpeg.P144p30fps16x9}
 	sess.OrchestratorInfo = &net.OrchestratorInfo{
-		Transcoder: ts.URL,
-		AuthToken:  stubAuthToken,
+		Transcoder:   ts.URL,
+		AuthToken:    stubAuthToken,
+		TicketParams: &net.TicketParams{Recipient: pm.RandAddress().Bytes()},
 		PriceInfo: &net.PriceInfo{
 			PricePerUnit:  2,
 			PixelsPerUnit: 2,
@@ -546,8 +548,9 @@ func TestTranscodeSegment_RefreshSession(t *testing.T) {
 	sess.Balance = balance
 	sess.Params.Profiles = []ffmpeg.VideoProfile{ffmpeg.P144p30fps16x9}
 	sess.OrchestratorInfo = &net.OrchestratorInfo{
-		Transcoder: ts.URL,
-		AuthToken:  stubAuthToken,
+		Transcoder:   ts.URL,
+		AuthToken:    stubAuthToken,
+		TicketParams: &net.TicketParams{Recipient: pm.RandAddress().Bytes()},
 	}
 
 	cxn := &rtmpConnection{
@@ -596,7 +599,7 @@ func TestTranscodeSegment_RefreshSession(t *testing.T) {
 			PricePerUnit:  1,
 			PixelsPerUnit: 1,
 		},
-		TicketParams: &net.TicketParams{},
+		TicketParams: &net.TicketParams{Recipient: pm.RandAddress().Bytes()},
 		AuthToken:    stubAuthToken,
 	}
 
@@ -1733,7 +1736,7 @@ func genBcastSess(ctx context.Context, t *testing.T, url string, os drivers.OSSe
 		Broadcaster:       stubBroadcaster2(),
 		Params:            &core.StreamParameters{ManifestID: mid, Profiles: []ffmpeg.VideoProfile{ffmpeg.P144p30fps16x9}, OS: os},
 		BroadcasterOS:     os,
-		OrchestratorInfo:  &net.OrchestratorInfo{Transcoder: transcoderURL, AuthToken: stubAuthToken},
+		OrchestratorInfo:  &net.OrchestratorInfo{Transcoder: transcoderURL, AuthToken: stubAuthToken, TicketParams: &net.TicketParams{Recipient: pm.RandAddress().Bytes()}},
 		OrchestratorScore: common.Score_Trusted,
 		lock:              &sync.RWMutex{},
 	}
