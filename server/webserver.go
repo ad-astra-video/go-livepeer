@@ -50,6 +50,7 @@ func (s *LivepeerServer) cliWebServerHandlers(bindAddr string) *http.ServeMux {
 	mux.Handle("/getBroadcastConfig", getBroadcastConfigHandler())
 	mux.Handle("/getAvailableTranscodingOptions", getAvailableTranscodingOptionsHandler())
 	mux.Handle("/getSessionPoolInfo", s.getSessionPoolInfoHandler())
+	mux.Handle("/getOrchestratorInfo", s.getOrchestratorInfoHandler())
 
 	// Rounds
 	mux.Handle("/currentRound", currentRoundHandler(client))
@@ -61,7 +62,7 @@ func (s *LivepeerServer) cliWebServerHandlers(bindAddr string) *http.ServeMux {
 	mux.Handle("/setOrchestratorConfig", mustHaveFormParams(s.setOrchestratorConfigHandler(client)))
 	mux.Handle("/setMaxFaceValue", mustHaveFormParams(s.setMaxFaceValueHandler(), "maxfacevalue"))
 	mux.Handle("/setPriceForBroadcaster", mustHaveFormParams(s.setPriceForBroadcaster(), "pricePerUnit", "pixelsPerUnit", "broadcasterEthAddr"))
-    mux.Handle("/activateTranscoderSecret", s.activateTranscoderSecretHandler())
+	mux.Handle("/activateTranscoderSecret", s.activateTranscoderSecretHandler())
 	mux.Handle("/deactivateTranscoderSecret", mustHaveFormParams(s.deactivateTranscoderSecretHandler(), "secret"))
 
 	// Bond, withdraw, reward

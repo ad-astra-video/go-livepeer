@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math/big"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/cenkalti/backoff"
 	ethcommon "github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/signer/core/apitypes"
 	"github.com/golang/glog"
@@ -20,6 +22,7 @@ import (
 	"github.com/livepeer/go-livepeer/core"
 	"github.com/livepeer/go-livepeer/eth"
 	"github.com/livepeer/go-livepeer/eth/types"
+	"github.com/livepeer/go-livepeer/net"
 	"github.com/livepeer/go-livepeer/pm"
 	"github.com/livepeer/lpms/ffmpeg"
 	"github.com/pkg/errors"
@@ -187,7 +190,6 @@ func getBroadcastConfigHandler() http.Handler {
 		config := struct {
 			MaxPrice           *big.Rat
 			TranscodingOptions string
-
 		}{
 			BroadcastCfg.MaxPrice(),
 			strings.Join(pNames, ","),
@@ -208,7 +210,7 @@ func getAvailableTranscodingOptionsHandler() http.Handler {
 	})
 }
 
-func (s* LivepeerServer) getSessionPoolInfoHandler() http.Handler {
+func (s *LivepeerServer) getSessionPoolInfoHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.LivepeerNode.NodeType == core.BroadcasterNode {
 			cxn_session_pools := make(map[string]map[string]interface{})
@@ -223,11 +225,85 @@ func (s* LivepeerServer) getSessionPoolInfoHandler() http.Handler {
 				session_pool["untrusted"] = s.rtmpConnections[cpl.ManifestID()].sessManager.untrustedPool.sessMap
 				cxn_session_pools[mid] = session_pool
 			}
-			
+
 			respondJson(w, cxn_session_pools)
 		}
 	})
 
+}
+
+func (s *LivepeerServer) getOrchestratorInfoHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.LivepeerNode.NodeType == core.BroadcasterNode {
+			//create GetOrchestrator request
+			b := core.NewBroadcaster(s.LivepeerNode)
+			b_sig, err := b.Sign([]byte(fmt.Sprintf("%v", b.Address().Hex())))
+			if err != nil {
+				respond500(w, "could not create sig")
+			}
+			req := &net.OrchestratorRequest{Address: b.Address().Bytes(), Sig: b_sig}
+			//send GetOrchestrator request
+			orch_url := r.Header.Get("Url")
+			if orch_url != "" {
+				url, err := url.ParseRequestURI(orch_url)
+				if err != nil {
+					respond400(w, "could not parse url")
+				}
+				orch_info_resp := make(map[string]interface{})
+				client, conn, err := startOrchestratorClient(context.Background(), url)
+				defer conn.Close()
+				if conn != nil && err == nil {
+					start := time.Now()
+					orch_info, err := client.GetOrchestrator(context.Background(), req)
+					if err != nil {
+						orch_info_resp["Status"] = "failed"
+						orch_info_resp["Took"] = time.Since(start).Milliseconds()
+						respondJson(w, orch_info_resp)
+					}
+					//parse net.OrchestratorInfo to json
+					orch_info_resp["Status"] = "success"
+					orch_info_resp["Took"] = time.Since(start).Milliseconds()
+					orch_info_resp["Transcoder"] = orch_info.GetTranscoder()
+					orch_info_resp["Address"] = hexutil.Encode(orch_info.GetAddress())
+					if orch_info.GetAuthToken() != nil {
+						orch_info_resp["SessionID"] = orch_info.AuthToken.SessionId
+						orch_info_resp["Expiration"] = orch_info.AuthToken.Expiration
+					}
+
+					if orch_info.GetPriceInfo() != nil {
+						orch_info_resp["PricePerPixel"] = orch_info.PriceInfo.PricePerUnit
+						orch_info_resp["PixelsPerUnit"] = orch_info.PriceInfo.PixelsPerUnit
+					}
+
+					//parse some of the ticket params
+					//parsing from rpc.go func pmTicketParams()
+					if orch_info.GetTicketParams() != nil {
+						orch_info_resp["TicketParams"] = pmTicketParams(orch_info.TicketParams)
+					}
+					//parse the capabilities and capacities
+					if orch_info.GetCapabilities() != nil {
+						capNameAndCapacity := make(map[string]int)
+						for capb, capc := range orch_info.Capabilities.Capacities {
+							capName, err := core.CapabilityToName(core.Capability(int(capb)))
+							if err == nil {
+								capNameAndCapacity[capName] = int(capc)
+							}
+						}
+						orch_info_resp["Capabilities"] = capNameAndCapacity
+					}
+
+					//send orchestrator info received
+					respondJson(w, orch_info_resp)
+				} else {
+					respond500(w, "getorchestrator request failed: "+err.Error())
+				}
+			} else {
+				respond400(w, "url not provided")
+			}
+		} else {
+			respond400(w, "not broadcaster node")
+		}
+	})
 }
 
 // Rounds
@@ -1437,7 +1513,7 @@ func isL1Network(db ChainIdGetter) (bool, error) {
 	return chainId.Int64() == MainnetChainId || chainId.Int64() == RinkebyChainId, err
 }
 
-//set remote transcoder info
+// set remote transcoder info
 func (s *LivepeerServer) setTranscoderSortMethodHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.LivepeerNode.NodeType == core.OrchestratorNode {
@@ -1541,7 +1617,7 @@ func (s *LivepeerServer) deactivateTranscoderSecretHandler() http.Handler {
 			if secret == "" {
 				respond400(w, "need to set secret")
 			}
-		
+
 			s.LivepeerNode.UpdateTranscoderSecret(secret, false)
 			glog.Infof("Transcoder secret deactivated: %v", secret)
 			respondOk(w, []byte(""))
