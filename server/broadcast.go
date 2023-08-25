@@ -38,7 +38,7 @@ var refreshTimeout = 2500 * time.Millisecond
 var maxDurationSec = common.MaxDuration.Seconds()
 
 // Max threshold for # of broadcast sessions under which we will refresh the session list
-var maxRefreshSessionsThreshold = 8.0
+var maxRefreshSessionsThreshold = 1.0
 
 var recordSegmentsMaxTimeout = 1 * time.Minute
 
@@ -254,6 +254,7 @@ func (sp *SessionPool) selectSessions(ctx context.Context, sessionsNum int) ([]*
 		return nil, []string{"no orchestrators in pool"}
 	}
 
+	clog.Infof(ctx, "sessions in selector are %v, refreshing if less than max of %v or half of orchs in session pool (%v)", strconv.Itoa(sp.sel.Size()), maxRefreshSessionsThreshold, math.Ceil(float64(sp.numOrchs)/2.0))
 	checkSessions := func(m *SessionPool) bool {
 		numSess := m.sel.Size()
 		if numSess < int(math.Min(maxRefreshSessionsThreshold, math.Ceil(float64(m.numOrchs)/2.0))) {
@@ -508,8 +509,7 @@ func (bsm *BroadcastSessionsManager) selectSessionsManual(ctx context.Context, o
 			selectedReasons = append(selectedReasons, "manually selected orchestrator")
 			clog.Infof(ctx, "Trusted session matched url %v", orchAddr)
 		} else {
-
-			clog.Infof(ctx, "Trusted session did not match orchAddr: %v, session url: %v, session eth address %v", orchAddr, url, sessEthAddr.Hex())
+			//clog.Infof(ctx, "Trusted session did not match orchAddr: %v, session url: %v, session eth address %v", orchAddr, url, sessEthAddr.Hex())
 		}
 	}
 	for url, sess := range bsm.untrustedPool.sessMap {
@@ -523,8 +523,7 @@ func (bsm *BroadcastSessionsManager) selectSessionsManual(ctx context.Context, o
 			selectedReasons = append(selectedReasons, "manually selected orchestrator")
 			clog.Infof(ctx, "Untrusted session matched url %v", orchAddr)
 		} else {
-			sessEthAddr := ethcommon.BytesToAddress(sess.OrchestratorInfo.GetAddress())
-			clog.Infof(ctx, "Untrusted session did not match orchAddr: %v, session url: %v, session eth address %v", orchAddr, url, sessEthAddr.Hex())
+			//clog.Infof(ctx, "Untrusted session did not match orchAddr: %v, session url: %v, session eth address %v", orchAddr, url, sessEthAddr.Hex())
 		}
 	}
 	clog.V(common.DEBUG).Infof(ctx, "Returning %v sessions with orchAddr=%v", len(sessions), orchAddr)
