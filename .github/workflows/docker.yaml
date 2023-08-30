@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - master
+      - "av-*"
     tags:
       - "v*"
 
@@ -68,7 +69,7 @@ jobs:
         uses: docker/metadata-action@v4
         with:
           images: |
-            livepeer/go-livepeer
+            0xb79orch/go-livepeer
             ghcr.io/${{ github.repository }}
           tags: |
             type=sha
@@ -95,8 +96,8 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           file: "docker/Dockerfile"
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=registry,ref=livepeerci/build:cache
-          cache-to: type=registry,ref=livepeerci/build:cache,mode=max
+          cache-from: type=registry,ref=0xb79orch/build-livepeer:cache
+          cache-to: type=registry,ref=0xb79orch/build-livepeer:cache,mode=max
 
   builder:
     name: go-livepeer builder docker image generation
@@ -128,7 +129,7 @@ jobs:
         id: match-tag
         with:
           text: ${{ github.ref_name }}
-          regex: '^(main|master|v[0-9]+\.\d+\.\d+)$'
+          regex: '^(main|master|v[0-9]+\.\d+\.\d+|av-.*)$'
 
       - name: Get build tags
         id: build-tag
@@ -159,7 +160,7 @@ jobs:
         uses: docker/metadata-action@v4
         with:
           images: |
-            livepeerci/build
+            0xb79orch/build-livepeer
             ghcr.io/${{ github.repository }}/build
           tags: |
             type=sha
