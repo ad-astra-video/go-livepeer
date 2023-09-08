@@ -85,6 +85,15 @@ type LivepeerConfig struct {
 	TranscodingOptions           *string
 	MaxAttempts                  *int
 	SelectRandFreq               *float64
+	SelectStakeWeight            *int
+	SelectPriceWeight            *int
+	SelectPerformanceWeight      *int
+	SelectStakeMinimum           *int64
+	SelectStakeMaximum           *int64
+	SelectPriceMinimum           *int64
+	SelectPriceMaximum           *int64
+	SelectPerformanceMinimum     *float64
+	SelectPerformanceMaximum     *float64
 	MaxSessions                  *string
 	CurrentManifest              *bool
 	Nvidia                       *string
@@ -154,6 +163,15 @@ func DefaultLivepeerConfig() LivepeerConfig {
 	defaultTranscodingOptions := "P240p30fps16x9,P360p30fps16x9"
 	defaultMaxAttempts := 3
 	defaultSelectRandFreq := 0.3
+	defaultSelectStakeWeight := 1
+	defaultSelectPriceWeight := 0
+	defaultSelectPerformanceWeight := 0
+	defaultSelectStakeMinimum := int64(0)
+	defaultSelectStakeMaximum := int64(0)
+	defaultSelectPriceMinimum := int64(0)
+	defaultSelectPriceMaximum := int64(0)
+	defaultSelectPerformanceMinimum := float64(0)
+	defaultSelectPerformanceMaximum := float64(0)
 	defaultMaxSessions := strconv.Itoa(10)
 	defaultCurrentManifest := false
 	defaultNvidia := ""
@@ -232,6 +250,15 @@ func DefaultLivepeerConfig() LivepeerConfig {
 		TranscodingOptions:           &defaultTranscodingOptions,
 		MaxAttempts:                  &defaultMaxAttempts,
 		SelectRandFreq:               &defaultSelectRandFreq,
+		SelectStakeWeight:            &defaultSelectStakeWeight,
+		SelectPriceWeight:            &defaultSelectPriceWeight,
+		SelectPerformanceWeight:      &defaultSelectPerformanceWeight,
+		SelectStakeMinimum:           &defaultSelectStakeMinimum,
+		SelectStakeMaximum:           &defaultSelectStakeMaximum,
+		SelectPriceMinimum:           &defaultSelectPriceMinimum,
+		SelectPriceMaximum:           &defaultSelectPriceMaximum,
+		SelectPerformanceMinimum:     &defaultSelectPerformanceMinimum,
+		SelectPerformanceMaximum:     &defaultSelectPerformanceMaximum,
 		MaxSessions:                  &defaultMaxSessions,
 		CurrentManifest:              &defaultCurrentManifest,
 		Nvidia:                       &defaultNvidia,
@@ -1106,7 +1133,21 @@ func StartLivepeer(ctx context.Context, cfg LivepeerConfig) {
 
 		// Set max transcode attempts. <=0 is OK; it just means "don't transcode"
 		server.MaxAttempts = *cfg.MaxAttempts
+		// Setup weighted selector
 		server.SelectRandFreq = *cfg.SelectRandFreq
+		server.StakeWeight = *cfg.SelectStakeWeight
+		server.PriceWeight = *cfg.SelectPriceWeight
+		server.PerformanceWeight = *cfg.SelectPerformanceWeight
+
+		minStake := *cfg.SelectStakeMinimum * 100000 //stake saved as int64 with 5 decimal places represented as int64
+		maxStake := *cfg.SelectStakeMaximum * 100000 //stake saved as int64 with 5 decimal places represented as int64
+		server.StakeLimit = server.SelectorLimit{Minimum: minStake, Maximum: maxStake}
+		minPrice, _ := common.PriceToFixed(big.NewRat(*cfg.SelectPriceMinimum, int64(1)))
+		maxPrice, _ := common.PriceToFixed(big.NewRat(*cfg.SelectPriceMaximum, int64(1)))
+		server.PriceLimit = server.SelectorLimit{Minimum: minPrice, Maximum: maxPrice}
+		minPerf, _ := common.LatencyScoreToFixed(*cfg.SelectPerformanceMinimum)
+		maxPerf, _ := common.LatencyScoreToFixed(*cfg.SelectPerformanceMaximum)
+		server.PerformanceLimit = server.SelectorLimit{Minimum: minPerf, Maximum: maxPerf}
 
 	} else if n.NodeType == core.OrchestratorNode {
 		*cfg.CliAddr = defaultAddr(*cfg.CliAddr, "127.0.0.1", OrchestratorCliPort)

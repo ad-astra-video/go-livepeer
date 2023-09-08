@@ -27,6 +27,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/livepeer/go-livepeer/clog"
 	"github.com/livepeer/go-livepeer/monitor"
 	"github.com/livepeer/go-livepeer/pm"
@@ -64,8 +65,6 @@ var BroadcastJobVideoProfiles = []ffmpeg.VideoProfile{ffmpeg.P240p30fps4x3, ffmp
 var AuthWebhookURL *url.URL
 var DetectionWebhookURL *url.URL
 var DetectionWhClient = &http.Client{Timeout: 2 * time.Second}
-
-var SelectRandFreq float64
 
 func PixelFormatNone() ffmpeg.PixelFormat {
 	return ffmpeg.PixelFormat{RawValue: ffmpeg.PixelFormatNone}
@@ -558,12 +557,12 @@ func (s *LivepeerServer) registerConnection(ctx context.Context, rtmpStrm stream
 	s.connectionLock.Unlock()
 
 	// initialize session manager
-	var stakeRdr stakeReader
+	var orchSelDataRdr orchSelectionDataReader
 	if s.LivepeerNode.Eth != nil {
-		stakeRdr = &storeStakeReader{store: s.LivepeerNode.Database}
+		orchSelDataRdr = &storeOrchSelectionDataReader{store: s.LivepeerNode.Database}
 	}
 	selFactory := func() BroadcastSessionsSelector {
-		return NewMinLSSelectorWithRandFreq(stakeRdr, SELECTOR_LATENCY_SCORE_THRESHOLD, SelectRandFreq)
+		return NewWeightedSelectorWithRandFreq(orchSelDataRdr, SelectRandFreq)
 	}
 
 	// safe, because other goroutines should be waiting on initializing channel
@@ -619,6 +618,10 @@ func removeRTMPStream(ctx context.Context, s *LivepeerServer, extmid core.Manife
 		clog.Warningf(ctx, "Attempted to end unknown stream with manifestID=%s", extmid)
 		return errUnknownStream
 	}
+	//save latency scores for selection
+	go s.saveLatencyScores(cxn.sessManager.trustedPool.sessMap)
+	go s.saveLatencyScores(cxn.sessManager.untrustedPool.sessMap)
+
 	cxn.stream.Close()
 	cxn.sessManager.cleanup(ctx)
 	cxn.pl.Cleanup()
@@ -633,6 +636,14 @@ func removeRTMPStream(ctx context.Context, s *LivepeerServer, extmid core.Manife
 	}
 
 	return nil
+}
+
+func (s *LivepeerServer) saveLatencyScores(sessions map[string]*BroadcastSession) {
+	for _, sess := range sessions {
+		sess_score, _ := common.LatencyScoreToFixed(sess.LatencyScore)
+		db_orch := common.DBOrch{EthereumAddr: hexutil.Encode(sess.OrchestratorInfo.TicketParams.Recipient), Score: sess_score}
+		s.LivepeerNode.Database.UpdateOrch(&db_orch)
+	}
 }
 
 //End RTMP Publish Handlers

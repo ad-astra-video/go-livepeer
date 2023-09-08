@@ -446,15 +446,15 @@ func NewSessionManager(ctx context.Context, node *core.LivepeerNode, params *cor
 	createSessionsUntrusted := func() ([]*BroadcastSession, error) {
 		return selectOrchestrator(ctx, node, params, untrustedNumOrchs, susUntrusted, common.ScoreEqualTo(common.Score_Untrusted))
 	}
-	var stakeRdr stakeReader
+	var orchSelDataRdr orchSelectionDataReader
 	if node.Eth != nil {
-		stakeRdr = &storeStakeReader{store: node.Database}
+		orchSelDataRdr = &storeOrchSelectionDataReader{store: node.Database}
 	}
 	bsm := &BroadcastSessionsManager{
 		mid:              params.ManifestID,
 		VerificationFreq: params.VerificationFreq,
-		trustedPool:      NewSessionPool(params.ManifestID, int(trustedPoolSize), trustedNumOrchs, susTrusted, createSessionsTrusted, NewMinLSSelector(stakeRdr, 1.0)),
-		untrustedPool:    NewSessionPool(params.ManifestID, int(untrustedPoolSize), untrustedNumOrchs, susUntrusted, createSessionsUntrusted, NewMinLSSelectorWithRandFreq(stakeRdr, 1.0, SelectRandFreq)),
+		trustedPool:      NewSessionPool(params.ManifestID, int(trustedPoolSize), trustedNumOrchs, susTrusted, createSessionsTrusted, NewWeightedSelector(orchSelDataRdr)),
+		untrustedPool:    NewSessionPool(params.ManifestID, int(untrustedPoolSize), untrustedNumOrchs, susUntrusted, createSessionsUntrusted, NewWeightedSelectorWithRandFreq(orchSelDataRdr, SelectRandFreq)),
 	}
 	bsm.trustedPool.refreshSessions(ctx)
 	bsm.untrustedPool.refreshSessions(ctx)

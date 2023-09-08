@@ -350,6 +350,10 @@ func PriceToFixed(price *big.Rat) (int64, error) {
 	return ratToFixed(price, priceScalingFactor)
 }
 
+func LatencyScoreToFixed(perf float64) (int64, error) {
+	return int64(perf * float64(1000)), nil
+}
+
 // FixedToPrice converts an fixed point number with 3 decimal places represented as in int64 into a big.Rat
 func FixedToPrice(price int64) *big.Rat {
 	return big.NewRat(price, priceScalingFactor)
