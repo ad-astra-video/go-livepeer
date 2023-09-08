@@ -315,7 +315,7 @@ func currentRoundHandler(client eth.LivepeerEthClient) http.Handler {
 			return
 		}
 
-		respondOk(w, currentRound.Bytes())
+		respondOk(w, []byte(currentRound.String()))
 	}))
 }
 
