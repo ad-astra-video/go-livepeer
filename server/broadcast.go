@@ -118,11 +118,13 @@ func NewSessionPool(mid core.ManifestID, poolSize, numOrchs int, sus *suspender,
 	}
 }
 
-func (sp *SessionPool) suspend(orch string) {
+func (sp *SessionPool) suspend(orch string) int {
 	poolSize := math.Max(1, float64(sp.poolSize))
 	numOrchs := math.Max(1, float64(sp.numOrchs))
 	penalty := int(math.Ceil(poolSize / numOrchs))
 	sp.sus.suspend(orch, penalty)
+
+	return penalty
 }
 
 func (sp *SessionPool) refreshSessions(ctx context.Context) {
@@ -486,14 +488,17 @@ func NewSessionManager(ctx context.Context, node *core.LivepeerNode, params *cor
 	return bsm
 }
 
-func (bsm *BroadcastSessionsManager) suspendAndRemoveOrch(sess *BroadcastSession) {
+func (bsm *BroadcastSessionsManager) suspendAndRemoveOrch(ctx context.Context, sess *BroadcastSession, err error) {
+	var penalty int
 	if sess.OrchestratorScore == common.Score_Untrusted {
-		bsm.untrustedPool.suspend(sess.OrchestratorInfo.GetTranscoder())
+		penalty = bsm.untrustedPool.suspend(sess.OrchestratorInfo.GetTranscoder())
 		bsm.untrustedPool.removeSession(sess)
 	} else {
-		bsm.trustedPool.suspend(sess.OrchestratorInfo.GetTranscoder())
+		penalty = bsm.trustedPool.suspend(sess.OrchestratorInfo.GetTranscoder())
 		bsm.trustedPool.removeSession(sess)
 	}
+
+	clog.PublicInfof(ctx, "Suspending and Removing orchestrator for %v session refreshes reason=%v", penalty, err.Error())
 }
 
 func (bsm *BroadcastSessionsManager) removeSession(session *BroadcastSession) {
@@ -614,7 +619,7 @@ func (bsm *BroadcastSessionsManager) cleanup(ctx context.Context) {
 func (bsm *BroadcastSessionsManager) chooseResults(ctx context.Context, seg *stream.HLSSegment, submitResultsCh chan *SubmitResult,
 	submittedCount int) (*BroadcastSession, *ReceivedTranscodeResult, error) {
 
-	trustedResult, untrustedResults, err := bsm.collectResults(submitResultsCh, submittedCount)
+	trustedResult, untrustedResults, err := bsm.collectResults(ctx, submitResultsCh, submittedCount)
 
 	if trustedResult == nil {
 		// no results from trusted orch, using anything
@@ -721,7 +726,7 @@ func (bsm *BroadcastSessionsManager) chooseResults(ctx context.Context, seg *str
 			}
 			// suspend sessions which returned incorrect results
 			for _, s := range sessionsToSuspend {
-				bsm.suspendAndRemoveOrch(s)
+				bsm.suspendAndRemoveOrch(ctx, s, fmt.Errorf("verification failed"))
 			}
 			return untrustedResult.Session, untrustedResult.TranscodeResult, untrustedResult.Err
 		} else {
@@ -732,7 +737,7 @@ func (bsm *BroadcastSessionsManager) chooseResults(ctx context.Context, seg *str
 	return trustedResult.Session, trustedResult.TranscodeResult, trustedResult.Err
 }
 
-func (bsm *BroadcastSessionsManager) collectResults(submitResultsCh chan *SubmitResult, submittedCount int) (*SubmitResult, []*SubmitResult, error) {
+func (bsm *BroadcastSessionsManager) collectResults(ctx context.Context, submitResultsCh chan *SubmitResult, submittedCount int) (*SubmitResult, []*SubmitResult, error) {
 	submitResults := make([]*SubmitResult, submittedCount)
 
 	// can have different strategies - for example, just use first one
@@ -761,7 +766,7 @@ func (bsm *BroadcastSessionsManager) collectResults(submitResultsCh chan *Submit
 			if isNonRetryableError(err) {
 				bsm.completeSession(context.TODO(), res.Session, false)
 			} else {
-				bsm.suspendAndRemoveOrch(res.Session)
+				bsm.suspendAndRemoveOrch(ctx, res.Session, fmt.Errorf("verification failed: %v", res.Err.Error()))
 			}
 		}
 	}
@@ -1127,7 +1132,7 @@ func transcodeSegment(ctx context.Context, cxn *rtmpConnection, seg *stream.HLSS
 				cxn.sessManager.completeSession(ctx, sess, false)
 				return nil, info, err
 			}
-			cxn.sessManager.suspendAndRemoveOrch(sess)
+			cxn.sessManager.suspendAndRemoveOrch(ctx, sess, fmt.Errorf("segment failed to transcode: %v", err.Error()))
 			if res == nil && err == nil {
 				err = errors.New("empty response")
 			}
@@ -1220,7 +1225,7 @@ func prepareForTranscoding(ctx context.Context, cxn *rtmpConnection, sess *Broad
 			if monitor.Enabled {
 				monitor.SegmentUploadFailed(ctx, cxn.nonce, seg.SeqNo, monitor.SegmentUploadErrorOS, err, false, "")
 			}
-			cxn.sessManager.suspendAndRemoveOrch(sess)
+			cxn.sessManager.suspendAndRemoveOrch(ctx, sess, fmt.Errorf("error saving segment: %v", err.Error()))
 			return nil, err
 		}
 		segCopy := *seg
@@ -1231,7 +1236,7 @@ func prepareForTranscoding(ctx context.Context, cxn *rtmpConnection, sess *Broad
 	refresh, err := shouldRefreshSession(ctx, sess)
 	if err != nil {
 		clog.Errorf(ctx, "Error checking whether to refresh session manifestID=%s orch=%v err=%q", cxn.mid, sess.Transcoder(), err)
-		cxn.sessManager.suspendAndRemoveOrch(sess)
+		cxn.sessManager.suspendAndRemoveOrch(ctx, sess, fmt.Errorf("refresh sessions failed: %v", err.Error()))
 		return nil, err
 	}
 
@@ -1239,7 +1244,7 @@ func prepareForTranscoding(ctx context.Context, cxn *rtmpConnection, sess *Broad
 		err := refreshSession(ctx, sess)
 		if err != nil {
 			clog.Errorf(ctx, "Error refreshing session manifestID=%s orch=%v err=%q", cxn.mid, sess.Transcoder(), err)
-			cxn.sessManager.suspendAndRemoveOrch(sess)
+			cxn.sessManager.suspendAndRemoveOrch(ctx, sess, fmt.Errorf("refresh sessions failed: %v", err.Error()))
 			return nil, err
 		}
 	}
@@ -1296,7 +1301,7 @@ func downloadResults(ctx context.Context, cxn *rtmpConnection, seg *stream.HLSSe
 				segLock.Lock()
 				dlErr = err
 				segLock.Unlock()
-				cxn.sessManager.suspendAndRemoveOrch(sess)
+				cxn.sessManager.suspendAndRemoveOrch(ctx, sess, fmt.Errorf("segment download failed: %v", err.Error()))
 				return
 			}
 
