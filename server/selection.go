@@ -3,6 +3,7 @@ package server
 import (
 	"container/heap"
 	"context"
+
 	ethcommon "github.com/ethereum/go-ethereum/common"
 	"github.com/livepeer/go-livepeer/clog"
 	"github.com/livepeer/go-livepeer/common"
@@ -199,7 +200,7 @@ func (s *MinLSSelector) selectUnknownSession(ctx context.Context) *BroadcastSess
 		s.perfScore.Mu.Unlock()
 	}
 
-	selected := s.selectionAlgorithm.Select(addrs, stakes, prices, perfScores)
+	selected := s.selectionAlgorithm.Select(ctx, addrs, stakes, prices, perfScores)
 
 	for i, sess := range s.unknownSessions {
 		if sess.OrchestratorInfo.GetTicketParams() == nil {
