@@ -1,13 +1,17 @@
 package server
 
 import (
+	"context"
+	"fmt"
 	"math"
 	"math/big"
 	"math/rand"
 	"time"
 
 	ethcommon "github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/golang/glog"
+	"github.com/livepeer/go-livepeer/clog"
 )
 
 var random = rand.New(rand.NewSource(time.Now().UnixNano()))
@@ -22,10 +26,10 @@ type ProbabilitySelectionAlgorithm struct {
 	PriceExpFactor float64
 }
 
-func (sa ProbabilitySelectionAlgorithm) Select(addrs []ethcommon.Address, stakes map[ethcommon.Address]int64, maxPrice *big.Rat, prices map[ethcommon.Address]*big.Rat, perfScores map[ethcommon.Address]float64) ethcommon.Address {
+func (sa ProbabilitySelectionAlgorithm) Select(ctx context.Context, addrs []ethcommon.Address, stakes map[ethcommon.Address]int64, maxPrice *big.Rat, prices map[ethcommon.Address]*big.Rat, perfScores map[ethcommon.Address]float64) ethcommon.Address {
 	filtered := sa.filter(addrs, maxPrice, prices, perfScores)
 	probabilities := sa.calculateProbabilities(filtered, stakes, prices)
-	return selectBy(probabilities)
+	return selectBy(ctx, probabilities)
 }
 
 func (sa ProbabilitySelectionAlgorithm) filter(addrs []ethcommon.Address, maxPrice *big.Rat, prices map[ethcommon.Address]*big.Rat, perfScores map[ethcommon.Address]float64) []ethcommon.Address {
@@ -109,7 +113,7 @@ func (sa ProbabilitySelectionAlgorithm) calculateProbabilities(addrs []ethcommon
 	return probs
 }
 
-func selectBy(probabilities map[ethcommon.Address]float64) ethcommon.Address {
+func selectBy(ctx context.Context, probabilities map[ethcommon.Address]float64) ethcommon.Address {
 	if len(probabilities) == 0 {
 		return ethcommon.Address{}
 	}
@@ -126,6 +130,18 @@ func selectBy(probabilities map[ethcommon.Address]float64) ethcommon.Address {
 	r := random.Float64()
 	for i, cumProb := range cumProbs {
 		if r <= cumProb {
+			ctx = clog.AddVal(ctx, "ethaddress", hexutil.Encode(addrs[i].Bytes()))
+			ctx = clog.AddVal(ctx, "orchestrator", "")
+			clog.PublicInfof(ctx,
+				"Selecting new orchestrator, reason=%v",
+				fmt.Sprintf(
+					"selection algo with probability of %v (orch %v of %v, cumulative_probabilities=%v)",
+					probabilities[addrs[i]],
+					i,
+					len(addrs),
+					cumProb,
+				),
+			)
 			return addrs[i]
 		}
 	}
