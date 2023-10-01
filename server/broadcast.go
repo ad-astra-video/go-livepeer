@@ -219,6 +219,8 @@ func selectSession(ctx context.Context, sessions []*BroadcastSession, exclude []
 		// threshold is selectable
 		if len(session.SegsInFlight) == 0 {
 			if session.LatencyScore > 0 && session.LatencyScore <= SELECTOR_LATENCY_SCORE_THRESHOLD {
+				ctx = clog.AddVal(ctx, "ethaddress", session.RecipientAddress())
+				ctx = clog.AddVal(ctx, "orchestrator", session.Transcoder())
 				clog.PublicInfof(ctx,
 					"Selecting new orchestrator, reason=%v",
 					fmt.Sprintf(
@@ -248,6 +250,8 @@ func selectSession(ctx context.Context, sessions []*BroadcastSession, exclude []
 			}
 
 			if timeInFlight < maxTimeInFlight {
+				ctx = clog.AddVal(ctx, "ethaddress", session.RecipientAddress())
+				ctx = clog.AddVal(ctx, "orchestrator", session.Transcoder())
 				clog.PublicInfof(ctx,
 					"Selected orchestrator reason=%v",
 					fmt.Sprintf(
