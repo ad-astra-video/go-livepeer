@@ -1610,7 +1610,7 @@ func PaymentRecvError(ctx context.Context, sender string, errStr string) {
 
 // WinningTicketsRecv records the number of winning tickets received
 func WinningTicketsRecv(ctx context.Context, sender string, numTickets int) {
-	if numTickets <= 0 {
+	if numTickets < 0 {
 		return
 	}
 
