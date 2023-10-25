@@ -287,10 +287,11 @@ message VideoProfile {
   int32 gop = 24;
 
   enum VideoCodec {
-    H264 = 0;
-    H265 = 1;
-    VP8  = 2;
-    VP9  = 3;
+    H264   = 0;
+    H265   = 1;
+    VP8    = 2;
+    VP9    = 3;
+    AV1    = 4;
   }
 
   // Encoder (video codec)
@@ -305,6 +306,8 @@ message VideoProfile {
   }
   ChromaSubsampling chromaFormat = 27;
   uint32 quality = 28;
+  uint32 av1Preset = 29;
+  string av1Params = 30;
 }
 
 // Individual transcoded segment data.

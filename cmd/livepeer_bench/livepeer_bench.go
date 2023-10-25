@@ -86,7 +86,7 @@ func main() {
 	}
 
 	glog.Infof("log level is: %d", ffmpeg.LogLevel(*log*8))
-	ffmpeg.InitFFmpegWithLogLevel(ffmpeg.LogLevel(*log * 8))
+	ffmpeg.InitFFmpegWithLogLevel(ffmpeg.LogLevel(*log*8), false)
 
 	var wg sync.WaitGroup
 	dir := path.Dir(*in)
@@ -135,7 +135,7 @@ func main() {
 		},
 	}
 
-	ffmpeg.InitFFmpegWithLogLevel(ffmpeg.FFLogWarning)
+	ffmpeg.InitFFmpegWithLogLevel(ffmpeg.FFLogWarning, false)
 	var detectorTc *ffmpeg.Transcoder
 	if *detectionFreq > 0 {
 		for _, d := range devices {

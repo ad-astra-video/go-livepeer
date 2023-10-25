@@ -2,6 +2,8 @@ module github.com/livepeer/go-livepeer
 
 go 1.20
 
+replace github.com/livepeer/lpms => ../lpms
+
 require (
 	contrib.go.opencensus.io/exporter/prometheus v0.4.2
 	github.com/cenkalti/backoff v2.2.1+incompatible

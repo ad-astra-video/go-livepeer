@@ -189,8 +189,15 @@ func FFmpegProfiletoNetProfile(ffmpegProfiles []ffmpeg.VideoProfile) ([]*net.Vid
 		if err != nil {
 			return nil, err
 		}
-		br := strings.Replace(profile.Bitrate, "k", "000", 1)
-		bitrate, err := strconv.Atoi(br)
+		bitrate := 0
+		if profile.Encoder != ffmpeg.AV1 {
+			br := strings.Replace(profile.Bitrate, "k", "000", 1)
+			bitrate, err = strconv.Atoi(br)
+		} else {
+			br := strings.Replace(profile.Bitrate, "k", "", 1)
+			bitrate, err = strconv.Atoi(br)
+		}
+
 		if err != nil {
 			return nil, err
 		}
@@ -231,9 +238,12 @@ func FFmpegProfiletoNetProfile(ffmpegProfiles []ffmpeg.VideoProfile) ([]*net.Vid
 			encoder = net.VideoProfile_VP8
 		case ffmpeg.VP9:
 			encoder = net.VideoProfile_VP9
+		case ffmpeg.AV1:
+			encoder = net.VideoProfile_AV1
 		default:
 			return nil, ErrProfEncoder
 		}
+
 		gop := int32(0)
 		if profile.GOP < 0 {
 			gop = int32(profile.GOP)
@@ -265,6 +275,8 @@ func FFmpegProfiletoNetProfile(ffmpegProfiles []ffmpeg.VideoProfile) ([]*net.Vid
 			ColorDepth:   int32(profile.ColorDepth),
 			ChromaFormat: chromaFormat,
 			Quality:      uint32(profile.Quality),
+			Av1Preset:    uint32(profile.AV1Preset),
+			Av1Params:    profile.AV1Params,
 		}
 		profiles = append(profiles, &fullProfile)
 	}

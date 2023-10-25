@@ -12,14 +12,14 @@ ENV	GOARCH="$TARGETARCH" \
 	CGO_LDFLAGS="-L/usr/local/cuda_${TARGETARCH}/lib64"
 
 RUN	apt update \
-	&& apt install -yqq software-properties-common curl apt-transport-https lsb-release yasm \
+	&& apt install -yqq software-properties-common curl apt-transport-https lsb-release nasm yasm \
 	&& curl -fsSL https://dl.google.com/go/go1.20.4.linux-${BUILDARCH}.tar.gz | tar -C /usr/local -xz \
 	&& curl -fsSL https://download.docker.com/linux/ubuntu/gpg | apt-key add - \
 	&& add-apt-repository "deb [arch=${BUILDARCH}] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
 	&& curl -fsSl https://apt.llvm.org/llvm-snapshot.gpg.key | apt-key add - \
 	&& add-apt-repository "deb [arch=${BUILDARCH}] https://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-12 main" \
 	&& apt update \
-	&& apt -yqq install clang-12 clang-tools-12 lld-12 build-essential pkg-config autoconf git python docker-ce-cli pciutils gcc-multilib libgcc-8-dev-arm64-cross gcc-mingw-w64-x86-64
+	&& apt -yqq install clang-12 clang-tools-12 lld-12 build-essential pkg-config autoconf git python docker-ce-cli pciutils gcc-multilib libgcc-8-dev-arm64-cross gcc-mingw-w64-x86-64 cmake meson ninja-build wget
 
 RUN	update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-12 30 \
 	&& update-alternatives --install /usr/bin/clang clang /usr/bin/clang-12 30 \

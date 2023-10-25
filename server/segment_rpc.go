@@ -84,6 +84,7 @@ func (h *lphttp) ServeSegment(w http.ResponseWriter, r *http.Request) {
 	seg := r.Header.Get(segmentHeader)
 
 	segData, ctx, err := verifySegCreds(ctx, orch, seg, sender)
+
 	if err != nil {
 		clog.Errorf(ctx, "Could not verify segment creds err=%q", err)
 		http.Error(w, err.Error(), http.StatusForbidden)
@@ -311,6 +312,8 @@ func makeFfmpegVideoProfiles(protoProfiles []*net.VideoProfile) ([]ffmpeg.VideoP
 			encoder = ffmpeg.VP8
 		case net.VideoProfile_VP9:
 			encoder = ffmpeg.VP9
+		case net.VideoProfile_AV1:
+			encoder = ffmpeg.AV1
 		default:
 			return nil, errEncoder
 		}
@@ -330,7 +333,10 @@ func makeFfmpegVideoProfiles(protoProfiles []*net.VideoProfile) ([]ffmpeg.VideoP
 			Profile:      encoderProf,
 			GOP:          gop,
 			Encoder:      encoder,
+			ColorDepth:   ffmpeg.ColorDepthBits(profile.ColorDepth),
 			Quality:      uint(profile.Quality),
+			AV1Preset:    uint(profile.Av1Preset),
+			AV1Params:    profile.Av1Params,
 		}
 		profiles = append(profiles, prof)
 	}
