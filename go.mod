@@ -2,7 +2,7 @@ module github.com/livepeer/go-livepeer
 
 go 1.20
 
-replace github.com/livepeer/lpms => ../lpms
+replace github.com/livepeer/lpms => github.com/ad-astra-video/lpms v0.0.0-20231031133358-d8d567668dcf
 
 require (
 	contrib.go.opencensus.io/exporter/prometheus v0.4.2
