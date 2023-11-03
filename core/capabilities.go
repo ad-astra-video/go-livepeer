@@ -51,6 +51,8 @@ const (
 	Capability_VP9_Decode
 	Capability_VP8_Encode
 	Capability_VP9_Encode
+	Capability_AV1_Decode
+	Capability_AV1_Encode
 	Capability_H264_Decode_444_8bit
 	Capability_H264_Decode_422_8bit
 	Capability_H264_Decode_444_10bit
@@ -83,6 +85,8 @@ var CapabilityNameLookup = map[Capability]string{
 	Capability_VP9_Decode:                 "VP9 decode",
 	Capability_VP8_Encode:                 "VP8 encode",
 	Capability_VP9_Encode:                 "VP9 encode",
+	Capability_AV1_Decode:                 "AV1 Decode",
+	Capability_AV1_Encode:                 "AV1 Encode",
 	Capability_H264_Decode_444_8bit:       "H264 Decode YUV444 8-bit",
 	Capability_H264_Decode_422_8bit:       "H264 Decode YUV422 8-bit",
 	Capability_H264_Decode_444_10bit:      "H264 Decode YUV444 10-bit",
@@ -113,6 +117,14 @@ var CapabilityTestLookup = map[Capability]CapabilityTest{
 	Capability_VP9_Decode: {
 		inVideoData: testSegment_VP9,
 		outProfile:  ffmpeg.VideoProfile{Resolution: "145x145", Bitrate: "1000k", Format: ffmpeg.FormatMPEGTS},
+	},
+	Capability_AV1_Decode: {
+		inVideoData: testSegment_AV1,
+		outProfile:  ffmpeg.VideoProfile{Resolution: "146x146", Bitrate: "1000k", Format: ffmpeg.FormatMPEGTS},
+	},
+	Capability_AV1_Encode: {
+		inVideoData: testSegment_AV1,
+		outProfile:  ffmpeg.VideoProfile{Resolution: "146x146", Bitrate: "1000k", Format: ffmpeg.FormatMPEGTS, Encoder: ffmpeg.AV1, AV1Preset: 12, AV1Params: "fast-decode=1:"},
 	},
 	Capability_H264_Decode_444_8bit: {
 		inVideoData: testSegment_H264_444_8bit,
@@ -169,6 +181,8 @@ func OptionalCapabilities() []Capability {
 		Capability_HEVC_Encode,
 		Capability_VP8_Decode,
 		Capability_VP9_Decode,
+		Capability_AV1_Decode,
+		Capability_AV1_Encode,
 		Capability_H264_Decode_444_8bit,
 		Capability_H264_Decode_422_8bit,
 		Capability_H264_Decode_444_10bit,
@@ -492,6 +506,8 @@ func inputCodecToCapability(codec ffmpeg.VideoCodec) (Capability, error) {
 		return Capability_VP8_Decode, nil
 	case ffmpeg.VP9:
 		return Capability_VP9_Decode, nil
+	case ffmpeg.AV1:
+		return Capability_AV1_Decode, nil
 	}
 	return Capability_Invalid, capCodecConv
 }
@@ -506,6 +522,8 @@ func outputCodecToCapability(codec ffmpeg.VideoCodec) (Capability, error) {
 		return Capability_VP8_Encode, nil
 	case ffmpeg.VP9:
 		return Capability_VP9_Encode, nil
+	case ffmpeg.AV1:
+		return Capability_AV1_Encode, nil
 	}
 	return Capability_Invalid, capCodecConv
 }

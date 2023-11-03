@@ -108,6 +108,7 @@ fi
 
 export PATH="$ROOT/compiled/bin:${PATH}"
 export PKG_CONFIG_PATH="${PKG_CONFIG_PATH:-}:$ROOT/compiled/lib/pkgconfig"
+export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}:$ROOT/compiled/lib"
 
 mkdir -p "$ROOT/"
 
@@ -151,6 +152,34 @@ if [[ ! -e "$ROOT/x264" ]]; then
   ./configure --prefix="$ROOT/compiled" --enable-pic --enable-static ${HOST_OS:-} --disable-cli --extra-cflags="$EXTRA_CFLAGS" --extra-asflags="$EXTRA_CFLAGS" --extra-ldflags="$EXTRA_LDFLAGS" $EXTRA_X264_FLAGS || (cat $ROOT/x264/config.log && exit 1)
   make -j$NPROC
   make -j$NPROC install-lib-static
+fi
+
+if [[ "$GOOS" == "linux" && "$GOARCH" == "amd64" ]]; then
+  EXTRA_FFMPEG_FLAGS="$EXTRA_FFMPEG_FLAGS --enable-libdav1d --enable-libsvtav1  --enable-encoder=libsvtav1 --enable-decoder=libdav1d "
+
+  #SVT-AV1 support
+  if [[ ! -e "$ROOT/svt-av1" ]]; then
+    git clone https://gitlab.com/AOMediaCodec/SVT-AV1.git "$ROOT/svt-av1"
+    cd "$ROOT/svt-av1"
+    git checkout tags/v1.7.0
+    mkdir -p "$ROOT/svt-av1/build"
+    cd "./build"
+    CC=clang CXX=clang++ cmake .. -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$ROOT/compiled -DBUILD_DEC=OFF -DBUILD_SHARED_LIBS=OFF ..
+    make -j $(nproc)
+    make install
+  fi
+
+  #libdav1d decoder
+  if [[ ! -e "$ROOT/dav1d" ]]; then
+    git clone https://code.videolan.org/videolan/dav1d.git "$ROOT/dav1d"
+    cd "$ROOT/dav1d"
+    git checkout tags/1.2.1
+    mkdir -p "$ROOT/dav1d/build"
+    cd "$ROOT/dav1d/build"
+    CC=clang CXX=clang++ meson setup -Denable_tools=false -Denable_tests=false --default-library=static .. --prefix "$ROOT/compiled" --libdir="$ROOT/compiled/lib"
+    ninja
+    ninja install
+  fi
 fi
 
 if [[ "$GOOS" == "linux" && "$BUILD_TAGS" == *"debug-video"* ]]; then
@@ -213,6 +242,35 @@ if [[ ! -e "$ROOT/ffmpeg/libavcodec/libavcodec.a" ]]; then
   git clone https://github.com/livepeer/FFmpeg.git "$ROOT/ffmpeg" || echo "FFmpeg dir already exists"
   cd "$ROOT/ffmpeg"
   git checkout 2e18d069668c143f3c251067abd25389e411d022
+
+  if [[ "$GOOS" == "linux" && "$GOARCH" == "amd64" ]]; then
+    # patch for new api version of dav1d
+    wget https://aur.archlinux.org/cgit/aur.git/plain/0002-add-build-fix-for-dav1d-1.0.0.patch?h=ffmpeg-shinobi -O "$ROOT/0002-add-build-fix-for-dav1d-1.0.0.patch"
+    patch -p1 --fuzz=100 < "$ROOT/0002-add-build-fix-for-dav1d-1.0.0.patch"
+    #patches for svt-av1
+    patch -p1 < ../svt-av1/ffmpeg_plugin/n4.4/0001*
+    patch -p1 < ../svt-av1/ffmpeg_plugin/n4.4/0002*
+    patch -p1 < ../svt-av1/ffmpeg_plugin/n4.4/0003*
+    patch -p1 < ../svt-av1/ffmpeg_plugin/n4.4/0004*
+    patch -p1 < ../svt-av1/ffmpeg_plugin/n4.4/0005*
+    patch -p1 --fuzz=5 < ../svt-av1/ffmpeg_plugin/n4.4/0006*
+    patch -p1 < ../svt-av1/ffmpeg_plugin/n4.4/0007*
+    patch -p1 < ../svt-av1/ffmpeg_plugin/n4.4/0008*
+    patch -p1 < ../svt-av1/ffmpeg_plugin/n4.4/0009*
+    patch -p1 < ../svt-av1/ffmpeg_plugin/n4.4/0010*
+    patch -p1 < ../svt-av1/ffmpeg_plugin/n4.4/0011*
+    patch -p1 < ../svt-av1/ffmpeg_plugin/n4.4/0012*
+    patch -p1 < ../svt-av1/ffmpeg_plugin/n4.4/0013*
+    patch -p1 < ../svt-av1/ffmpeg_plugin/n4.4/0014*
+    patch -p1 < ../svt-av1/ffmpeg_plugin/n4.4/0015*
+    patch -p1 < ../svt-av1/ffmpeg_plugin/n4.4/0016*
+    patch -p1 < ../svt-av1/ffmpeg_plugin/n4.4/0017*
+    patch -p1 < ../svt-av1/ffmpeg_plugin/n4.4/0018*
+    patch -p1 < ../svt-av1/ffmpeg_plugin/n4.4/0019*
+    patch -p1 < ../svt-av1/ffmpeg_plugin/n4.4/0020*
+    patch -p1 < ../svt-av1/ffmpeg_plugin/n4.4/0021*  
+  fi
+
   ./configure ${TARGET_OS:-} $DISABLE_FFMPEG_COMPONENTS --fatal-warnings \
     --enable-libx264 --enable-gpl \
     --enable-protocol=rtmp,file,pipe \
@@ -225,6 +283,7 @@ if [[ ! -e "$ROOT/ffmpeg/libavcodec/libavcodec.a" ]]; then
     --enable-decoder=aac,opus,h264 \
     --extra-cflags="${EXTRA_CFLAGS} -I${ROOT}/compiled/include -I/usr/local/cuda/include" \
     --extra-ldflags="${EXTRA_FFMPEG_LDFLAGS} -L${ROOT}/compiled/lib -L/usr/local/cuda/lib64" \
+    --extra-libs="-lpthread -lm" \
     --prefix="$ROOT/compiled" \
     $EXTRA_FFMPEG_FLAGS \
     $DEV_FFMPEG_FLAGS || (tail -100 ${ROOT}/ffmpeg/ffbuild/config.log && exit 1)
