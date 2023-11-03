@@ -22,7 +22,6 @@ import (
 
 	"github.com/livepeer/go-livepeer/clog"
 	"github.com/livepeer/go-livepeer/common"
-	"github.com/livepeer/go-livepeer/eth"
 	"github.com/livepeer/go-livepeer/monitor"
 	"github.com/livepeer/go-livepeer/net"
 	"github.com/livepeer/go-livepeer/pm"
@@ -161,6 +160,8 @@ func (orch *orchestrator) ProcessPayment(ctx context.Context, payment net.Paymen
 
 	var receiveErr error
 
+	start := time.Now()
+
 	for _, tsp := range payment.TicketSenderParams {
 
 		ticket := pm.NewTicket(
@@ -170,7 +171,7 @@ func (orch *orchestrator) ProcessPayment(ctx context.Context, payment net.Paymen
 			tsp.SenderNonce,
 		)
 
-		clog.V(common.DEBUG).Infof(ctx, "Receiving ticket sessionID=%v faceValue=%v winProb=%v ev=%v", manifestID, eth.FormatUnits(ticket.FaceValue, "ETH"), ticket.WinProbRat().FloatString(10), ticket.EV().FloatString(2))
+		//clog.V(common.DEBUG).Infof(ctx, "Receiving ticket sessionID=%v faceValue=%v winProb=%v ev=%v", manifestID, eth.FormatUnits(ticket.FaceValue, "ETH"), ticket.WinProbRat().FloatString(10), ticket.EV().FloatString(2))
 
 		_, won, err := orch.node.Recipient.ReceiveTicket(
 			ticket,
@@ -209,6 +210,8 @@ func (orch *orchestrator) ProcessPayment(ctx context.Context, payment net.Paymen
 			}(ticket, tsp.Sig, seed)
 		}
 	}
+
+	glog.Infof("Payment processed manifestID=%v totalEV=%v totalTickets=%v totalWinningTickets=%v took=%vms", manifestID, totalEV.FloatString(2), totalTickets, totalWinningTickets, time.Since(start).Milliseconds())
 
 	if monitor.Enabled {
 		monitor.TicketValueRecv(ctx, sender.Hex(), totalEV)
