@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-
+#exec >../install.log 2>&1
 set -ex
 
 ROOT="${1:-$HOME}"
@@ -114,7 +114,8 @@ if [[ ! -e "$ROOT/x264" ]]; then
   make -j$NPROC install-lib-static
 fi
 
-if [[ "$UNAME" == "Linux" && ! $IS_ARM64 ]]; then
+#if [[ "$UNAME" == "Linux" && ! $IS_ARM64 ]]; then
+if [[ ! $IS_ARM64 ]]; then
   EXTRA_FFMPEG_FLAGS="$EXTRA_FFMPEG_FLAGS --enable-libdav1d --enable-libsvtav1  --enable-encoder=libsvtav1 --enable-decoder=libdav1d "
   
   #SVT-AV1 support
@@ -122,11 +123,11 @@ if [[ "$UNAME" == "Linux" && ! $IS_ARM64 ]]; then
     git clone https://gitlab.com/AOMediaCodec/SVT-AV1.git "$ROOT/svt-av1"
     cd "$ROOT/svt-av1"
     git checkout tags/v1.7.0
-    mkdir -p "$ROOT/svt-av1/build"
-    cd "./build"
+    mkdir -p "$ROOT/svt-av1/build-svt"
+    cd "$ROOT/svt-av1/build-svt"
     CC=clang CXX=clang++ cmake .. -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$ROOT/compiled -DBUILD_DEC=OFF -DBUILD_SHARED_LIBS=OFF ..
     make -j $(nproc)
-    make install
+    make install    
   fi
 
   #libdav1d decoder
@@ -230,6 +231,9 @@ if [[ ! -e "$ROOT/ffmpeg/libavcodec/libavcodec.a" ]]; then
     patch -p1 < ../svt-av1/ffmpeg_plugin/n4.4/0020*
     patch -p1 < ../svt-av1/ffmpeg_plugin/n4.4/0021*  
   fi
+  
+  #patch windows build with binutils >= 2.40
+  patch -p1 < "$ROOT/0001-avcodec-x86-mathops-clip-constants-used-with-shift-i.patch"
 
   ./configure ${TARGET_OS:-} $DISABLE_FFMPEG_COMPONENTS \
     --enable-libx264 --enable-gpl \
@@ -254,3 +258,4 @@ if [[ ! -e "$ROOT/ffmpeg/libavcodec/libavcodec.a" || $BUILD_TAGS == *"debug-vide
   make -j$NPROC
   make -j$NPROC install
 fi
+
