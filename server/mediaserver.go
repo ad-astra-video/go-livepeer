@@ -850,6 +850,7 @@ func (s *LivepeerServer) HandlePush(w http.ResponseWriter, r *http.Request) {
 		errorOut(http.StatusUnprocessableEntity, "Error getting codec info url=%s", r.URL)
 		return
 	}
+	glog.Infof("file parsed  status=%v, mediaInfo=%+v", status, mediaFormat)
 
 	var vcodec *ffmpeg.VideoCodec
 	if len(mediaFormat.Vcodec) == 0 {
