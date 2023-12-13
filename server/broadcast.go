@@ -429,6 +429,7 @@ func (sp *SessionPool) completeSession(sess *BroadcastSession) {
 type BroadcastSessionsManager struct {
 	mid              core.ManifestID
 	VerificationFreq uint
+	LivepeerNode     *core.LivepeerNode
 
 	// Accessing or changing any of the below requires ownership of this mutex
 	sessLock sync.Mutex
@@ -481,6 +482,7 @@ func NewSessionManager(ctx context.Context, node *core.LivepeerNode, params *cor
 		VerificationFreq: params.VerificationFreq,
 		trustedPool:      NewSessionPool(params.ManifestID, int(trustedPoolSize), trustedNumOrchs, susTrusted, createSessionsTrusted, NewMinLSSelector(stakeRdr, 1.0, node.SelectionAlgorithm, node.OrchPerfScore)),
 		untrustedPool:    NewSessionPool(params.ManifestID, int(untrustedPoolSize), untrustedNumOrchs, susUntrusted, createSessionsUntrusted, NewMinLSSelector(stakeRdr, 1.0, node.SelectionAlgorithm, node.OrchPerfScore)),
+		LivepeerNode:     node,
 	}
 	bsm.trustedPool.refreshSessions(ctx)
 	bsm.untrustedPool.refreshSessions(ctx)
@@ -529,7 +531,27 @@ func (bsm *BroadcastSessionsManager) selectSessionsManual(ctx context.Context, o
 	clog.V(common.DEBUG).Infof(ctx, "Searching %v trusted and %v untrusted seesions for orchAddr=%v", len(bsm.trustedPool.sessMap), len(bsm.untrustedPool.sessMap), orchAddr)
 	var sessions []*BroadcastSession
 	orchEthAddr := ethcommon.HexToAddress(orchAddr)
+	orchAddrIsUrl := strings.Contains(orchAddr, "http")
 
+	//check lastSess to use sessions already picked
+	checkLast := append(bsm.trustedPool.lastSess, bsm.untrustedPool.lastSess...)
+	for _, sess := range checkLast {
+		if orchAddrIsUrl {
+			if sess.Transcoder() == orchAddr {
+				sessions = append(sessions, sess)
+			}
+		} else {
+			sessEthAddr := ethcommon.BytesToAddress(sess.OrchestratorInfo.GetTicketParams().Recipient)
+			if bytes.Compare(orchEthAddr.Bytes(), sessEthAddr.Bytes()) == 0 {
+				sessions = append(sessions, sess)
+			}
+		}
+		if len(sessions) > 0 {
+			return sessions, false, true
+		}
+	}
+
+	//no last session loop through trustedPool and untrustedPool to find orchestrator
 	for url, sess := range bsm.trustedPool.sessMap {
 		sessEthAddr := ethcommon.BytesToAddress(sess.OrchestratorInfo.GetTicketParams().Recipient)
 		if bytes.Compare(orchEthAddr.Bytes(), sessEthAddr.Bytes()) == 0 {
@@ -541,7 +563,12 @@ func (bsm *BroadcastSessionsManager) selectSessionsManual(ctx context.Context, o
 		} else {
 			//clog.Infof(ctx, "Trusted session did not match orchAddr: %v, session url: %v, session eth address %v", orchAddr, url, sessEthAddr.Hex())
 		}
+
 	}
+	if len(sessions) > 0 {
+		bsm.trustedPool.lastSess = append([]*BroadcastSession{}, sessions...)
+	}
+
 	for url, sess := range bsm.untrustedPool.sessMap {
 		sessEthAddr := ethcommon.BytesToAddress(sess.OrchestratorInfo.GetTicketParams().Recipient)
 		if bytes.Compare(orchEthAddr.Bytes(), sessEthAddr.Bytes()) == 0 {
@@ -553,7 +580,35 @@ func (bsm *BroadcastSessionsManager) selectSessionsManual(ctx context.Context, o
 		} else {
 			//clog.Infof(ctx, "Untrusted session did not match orchAddr: %v, session url: %v, session eth address %v", orchAddr, url, sessEthAddr.Hex())
 		}
+
 	}
+
+	//create a broadcast session if the orchAddr passed is a url
+	if len(sessions) == 0 && len(bsm.untrustedPool.sessMap) > 0 {
+		oUrl, err := url.ParseRequestURI(orchAddr)
+		if err == nil {
+			//get broadcaster and stream params from another session.  first session stream params should be same as all, exit loop after first session.
+			var params core.StreamParameters
+			for _, s := range bsm.untrustedPool.sessMap {
+				params = *s.Params
+				break
+			}
+
+			oInfo, oErr := getOrchestratorInfoRPC(ctx, core.NewBroadcaster(bsm.LivepeerNode), oUrl)
+			if oErr == nil {
+				od := common.OrchestratorDescriptor{LocalInfo: nil, RemoteInfo: oInfo}
+				sess := newBroadcastSession(ctx, od, bsm.LivepeerNode, &params)
+				sessions = append(sessions, sess)
+				//add to untrusted pool so do not have to create again
+				bsm.untrustedPool.sessMap[oUrl.RequestURI()] = sess
+			}
+		}
+	}
+
+	if len(sessions) > 0 {
+		bsm.untrustedPool.lastSess = append([]*BroadcastSession{}, sessions...)
+	}
+
 	clog.V(common.DEBUG).Infof(ctx, "Returning %v sessions with orchAddr=%v", len(sessions), orchAddr)
 	return sessions, false, true
 }
@@ -839,64 +894,70 @@ func selectOrchestrator(ctx context.Context, n *core.LivepeerNode, params *core.
 	var sessions []*BroadcastSession
 
 	for _, od := range ods {
-		var (
-			sessionID    string
-			balance      Balance
-			ticketParams *pm.TicketParams
-		)
-
-		if od.RemoteInfo.AuthToken == nil {
-			clog.Errorf(ctx, "Missing auth token orch=%v", od.RemoteInfo.Transcoder)
-			continue
+		session := newBroadcastSession(ctx, od, n, params)
+		if session != nil {
+			sessions = append(sessions, session)
 		}
-
-		if n.Sender != nil {
-			if od.RemoteInfo.TicketParams == nil {
-				clog.Errorf(ctx, "Missing ticket params orch=%v", od.RemoteInfo.Transcoder)
-				continue
-			}
-
-			ticketParams = pmTicketParams(od.RemoteInfo.TicketParams)
-			sessionID = n.Sender.StartSession(*ticketParams)
-
-			if n.Balances != nil {
-				balance = core.NewBalance(ticketParams.Recipient, core.ManifestID(od.RemoteInfo.AuthToken.SessionId), n.Balances)
-			}
-		}
-
-		var orchOS drivers.OSSession
-		if len(od.RemoteInfo.Storage) > 0 {
-			orchOS = drivers.NewSession(core.FromNetOsInfo(od.RemoteInfo.Storage[0]))
-		}
-
-		bcastOS := params.OS
-		if bcastOS.IsExternal() {
-			// Give each O its own OS session to prevent front running uploads
-			pfx := fmt.Sprintf("%v/%v", params.ManifestID, od.RemoteInfo.AuthToken.SessionId)
-			bcastOS = bcastOS.OS().NewSession(pfx)
-		}
-
-		var oScore float32
-		if od.LocalInfo != nil {
-			oScore = od.LocalInfo.Score
-		}
-		session := &BroadcastSession{
-			Broadcaster:       core.NewBroadcaster(n),
-			Params:            params,
-			OrchestratorInfo:  od.RemoteInfo,
-			OrchestratorOS:    orchOS,
-			BroadcasterOS:     bcastOS,
-			Sender:            n.Sender,
-			PMSessionID:       sessionID,
-			Balances:          n.Balances,
-			Balance:           balance,
-			lock:              &sync.RWMutex{},
-			OrchestratorScore: oScore,
-		}
-
-		sessions = append(sessions, session)
 	}
+
 	return sessions, nil
+}
+
+func newBroadcastSession(ctx context.Context, od common.OrchestratorDescriptor, n *core.LivepeerNode, params *core.StreamParameters) *BroadcastSession {
+	var (
+		sessionID    string
+		balance      Balance
+		ticketParams *pm.TicketParams
+	)
+
+	if od.RemoteInfo.AuthToken == nil {
+		clog.Errorf(ctx, "Missing auth token orch=%v", od.RemoteInfo.Transcoder)
+		return nil
+	}
+
+	if n.Sender != nil {
+		if od.RemoteInfo.TicketParams == nil {
+			clog.Errorf(ctx, "Missing ticket params orch=%v", od.RemoteInfo.Transcoder)
+			return nil
+		}
+
+		ticketParams = pmTicketParams(od.RemoteInfo.TicketParams)
+		sessionID = n.Sender.StartSession(*ticketParams)
+
+		if n.Balances != nil {
+			balance = core.NewBalance(ticketParams.Recipient, core.ManifestID(od.RemoteInfo.AuthToken.SessionId), n.Balances)
+		}
+	}
+
+	var orchOS drivers.OSSession
+	if len(od.RemoteInfo.Storage) > 0 {
+		orchOS = drivers.NewSession(core.FromNetOsInfo(od.RemoteInfo.Storage[0]))
+	}
+
+	bcastOS := params.OS
+	if bcastOS.IsExternal() {
+		// Give each O its own OS session to prevent front running uploads
+		pfx := fmt.Sprintf("%v/%v", params.ManifestID, od.RemoteInfo.AuthToken.SessionId)
+		bcastOS = bcastOS.OS().NewSession(pfx)
+	}
+
+	var oScore float32
+	if od.LocalInfo != nil {
+		oScore = od.LocalInfo.Score
+	}
+	return &BroadcastSession{
+		Broadcaster:       core.NewBroadcaster(n),
+		Params:            params,
+		OrchestratorInfo:  od.RemoteInfo,
+		OrchestratorOS:    orchOS,
+		BroadcasterOS:     bcastOS,
+		Sender:            n.Sender,
+		PMSessionID:       sessionID,
+		Balances:          n.Balances,
+		Balance:           balance,
+		lock:              &sync.RWMutex{},
+		OrchestratorScore: oScore,
+	}
 }
 
 func processSegment(ctx context.Context, cxn *rtmpConnection, seg *stream.HLSSegment, segPar *core.SegmentParameters, orchAddr string) ([]string, error) {
