@@ -73,6 +73,9 @@ type LocalSenderMonitorConfig struct {
 	RedeemGas       int
 	SuggestGasPrice func(context.Context) (*big.Int, error)
 	RPCTimeout      time.Duration
+
+	// The security needed for tickets from senders
+	ReserveMultiplier int
 }
 
 type LocalSenderMonitor struct {
@@ -223,10 +226,17 @@ func (sm *LocalSenderMonitor) reserveAlloc(addr ethcommon.Address) (*big.Int, er
 	if err != nil {
 		return nil, err
 	}
+
 	poolSize := sm.tm.GetTranscoderPoolSize()
 	if poolSize.Cmp(big.NewInt(0)) == 0 {
 		return big.NewInt(0), nil
 	}
+
+	//limit reserve allocation if reserveMultiplier set at startup
+	if sm.cfg.ReserveMultiplier != -1 {
+		poolSize = big.NewInt(int64(sm.cfg.ReserveMultiplier))
+	}
+
 	reserve := new(big.Int).Add(info.Reserve.FundsRemaining, info.Reserve.ClaimedInCurrentRound)
 	return new(big.Int).Sub(new(big.Int).Div(reserve, poolSize), claimed), nil
 }

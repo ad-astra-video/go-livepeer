@@ -173,6 +173,8 @@ func parseLivepeerConfig() starter.LivepeerConfig {
 	cfg.MaxTotalEV = flag.String("maxTotalEV", *cfg.MaxTotalEV, "The maximum acceptable expected value for one PM payment")
 	// Broadcaster deposit multiplier to determine max acceptable ticket faceValue
 	cfg.DepositMultiplier = flag.Int("depositMultiplier", *cfg.DepositMultiplier, "The deposit multiplier used to determine max acceptable faceValue for PM tickets")
+	// Orchestrator reserve multiplier to determine minimum faceValue of tickets
+	cfg.ReserveMultiplier = flag.Int("reserveMultiplier", *cfg.ReserveMultiplier, "The reserve multiplier used to determine acceptable faceValue for tickets (default = total active orchestrators for round)")
 	// Orchestrator base pricing info
 	cfg.PricePerUnit = flag.String("pricePerUnit", "0", "The price per 'pixelsPerUnit' amount pixels. Can be specified in wei or a custom currency in the format <price><currency> (e.g. 0.50USD). When using a custom currency, a corresponding price feed must be configured with -priceFeedAddr")
 	// Unit of pixels for both O's pricePerUnit and B's maxPricePerUnit
