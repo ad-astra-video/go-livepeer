@@ -121,6 +121,7 @@ type LivepeerConfig struct {
 	MaxTicketEV                  *string
 	MaxTotalEV                   *string
 	DepositMultiplier            *int
+	ReserveMultiplier            *int
 	PricePerUnit                 *int
 	PixelsPerUnit                *int
 	AutoAdjustPrice              *bool
@@ -199,6 +200,7 @@ func DefaultLivepeerConfig() LivepeerConfig {
 	defaultMaxTicketEV := "3000000000000"
 	defaultMaxTotalEV := "20000000000000"
 	defaultDepositMultiplier := 1
+	defaultReserveMultiplier := -1
 	defaultMaxPricePerUnit := 0
 	defaultPixelsPerUnit := 1
 	defaultAutoAdjustPrice := true
@@ -287,6 +289,7 @@ func DefaultLivepeerConfig() LivepeerConfig {
 		MaxTicketEV:            &defaultMaxTicketEV,
 		MaxTotalEV:             &defaultMaxTotalEV,
 		DepositMultiplier:      &defaultDepositMultiplier,
+		ReserveMultiplier:      &defaultReserveMultiplier,
 		MaxPricePerUnit:        &defaultMaxPricePerUnit,
 		PixelsPerUnit:          &defaultPixelsPerUnit,
 		AutoAdjustPrice:        &defaultAutoAdjustPrice,
@@ -759,12 +762,16 @@ func StartLivepeer(ctx context.Context, cfg LivepeerConfig) {
 		}
 
 		smCfg := &pm.LocalSenderMonitorConfig{
-			Claimant:        recipientAddr,
-			CleanupInterval: cleanupInterval,
-			TTL:             smTTL,
-			RedeemGas:       redeemGas,
-			SuggestGasPrice: client.Backend().SuggestGasPrice,
-			RPCTimeout:      ethRPCTimeout,
+			Claimant:          recipientAddr,
+			CleanupInterval:   cleanupInterval,
+			TTL:               smTTL,
+			RedeemGas:         redeemGas,
+			SuggestGasPrice:   client.Backend().SuggestGasPrice,
+			RPCTimeout:        ethRPCTimeout,
+			ReserveMultiplier: *cfg.ReserveMultiplier,
+		}
+		if *cfg.ReserveMultiplier != -1 {
+			glog.Infof("Reserve multiplier set to %v, sender reserve will need to be %vx the ticket faceValue", *cfg.ReserveMultiplier, *cfg.ReserveMultiplier)
 		}
 
 		if *cfg.Orchestrator {
@@ -825,6 +832,7 @@ func StartLivepeer(ctx context.Context, cfg LivepeerConfig) {
 				sm = rc
 			} else {
 				sm = pm.NewSenderMonitor(smCfg, n.Eth, senderWatcher, timeWatcher, n.Database)
+
 			}
 
 			// Start sender monitor
