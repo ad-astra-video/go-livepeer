@@ -855,6 +855,7 @@ func StartLivepeer(ctx context.Context, cfg LivepeerConfig) {
 				EV:               ev,
 				RedeemGas:        redeemGas,
 				TxCostMultiplier: txCostMultiplier,
+				EVMultiplier:     *cfg.ReserveMultiplier,
 			}
 			n.Recipient, err = pm.NewRecipient(
 				recipientAddr,

@@ -68,6 +68,9 @@ type TicketParamsConfig struct {
 	// TxCostMultiplier is the desired multiplier of the transaction
 	// cost for redemption
 	TxCostMultiplier int
+
+	// The security needed for tickets from senders
+	EVMultiplier int
 }
 
 // GasPriceMonitor defines methods for monitoring gas prices
@@ -109,6 +112,9 @@ func NewRecipient(addr ethcommon.Address, broker Broker, val Validator, gpm GasP
 
 	var secret [32]byte
 	copy(secret[:], randBytes[:32])
+
+	//set ev multiplier
+	evMultiplier = big.NewInt(int64(cfg.EVMultiplier))
 
 	return NewRecipientWithSecret(addr, broker, val, gpm, sm, tm, secret, cfg), nil
 }

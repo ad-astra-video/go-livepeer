@@ -161,7 +161,7 @@ func (sm *LocalSenderMonitor) MaxFloat(addr ethcommon.Address) (*big.Int, error)
 	defer sm.mu.Unlock()
 
 	sm.ensureCache(addr)
-
+	glog.Infof("getting max float")
 	return sm.maxFloat(addr)
 }
 
@@ -194,6 +194,7 @@ func (sm *LocalSenderMonitor) ValidateSender(addr ethcommon.Address) error {
 // Caller should hold the lock for LocalSenderMonitor
 func (sm *LocalSenderMonitor) maxFloat(addr ethcommon.Address) (*big.Int, error) {
 	reserveAlloc, err := sm.reserveAlloc(addr)
+
 	if err != nil {
 		return nil, err
 	}
