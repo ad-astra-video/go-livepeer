@@ -203,9 +203,10 @@ else
 fi
 
 if [[ ! -e "$ROOT/ffmpeg/libavcodec/libavcodec.a" ]]; then
-  git clone https://github.com/livepeer/FFmpeg.git "$ROOT/ffmpeg" || echo "FFmpeg dir already exists"
+  #git clone https://github.com/livepeer/FFmpeg.git "$ROOT/ffmpeg" || echo "FFmpeg dir already exists"
+  git clone https://github.com/ad-astra-video/FFmpeg.git "$ROOT/ffmpeg" || echo "FFmpeg dir already exists"
   cd "$ROOT/ffmpeg"
-  git checkout 2e18d069668c143f3c251067abd25389e411d022
+  git checkout origin/update-ffmpeg
   ./configure ${TARGET_OS:-} $DISABLE_FFMPEG_COMPONENTS --fatal-warnings \
     --enable-libx264 --enable-gpl \
     --enable-protocol=rtmp,file,pipe \
