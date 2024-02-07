@@ -116,7 +116,7 @@ if [[ "$GOOS" != "darwin" ]]; then
   if [[ ! -e "$ROOT/nv-codec-headers" ]]; then
     git clone https://git.videolan.org/git/ffmpeg/nv-codec-headers.git "$ROOT/nv-codec-headers"
     cd $ROOT/nv-codec-headers
-    git checkout n9.1.23.1
+    git checkout n12.1.14.0
     make -e PREFIX="$ROOT/compiled"
     make install -e PREFIX="$ROOT/compiled"
   fi
@@ -219,6 +219,7 @@ if [[ ! -e "$ROOT/ffmpeg/libavcodec/libavcodec.a" ]]; then
     --enable-decoder=aac,opus,h264 \
     --extra-cflags="${EXTRA_CFLAGS} -I${ROOT}/compiled/include -I/usr/local/cuda/include" \
     --extra-ldflags="${EXTRA_FFMPEG_LDFLAGS} -L${ROOT}/compiled/lib -L/usr/local/cuda/lib64" \
+    --extra-libs="-lpthread -lm" \
     --prefix="$ROOT/compiled" \
     $EXTRA_FFMPEG_FLAGS \
     $DEV_FFMPEG_FLAGS || (tail -100 ${ROOT}/ffmpeg/ffbuild/config.log && exit 1)
