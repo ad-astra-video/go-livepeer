@@ -146,3 +146,5 @@ require (
 	howett.net/plist v1.0.0 // indirect
 	rsc.io/tmplfunc v0.0.3 // indirect
 )
+
+replace github.com/livepeer/lpms => github.com/ad-astra-video/lpms v0.0.0-20240205001713-2e3d04bf4b41
