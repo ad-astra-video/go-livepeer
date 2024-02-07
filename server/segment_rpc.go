@@ -310,6 +310,8 @@ func makeFfmpegVideoProfiles(protoProfiles []*net.VideoProfile) ([]ffmpeg.VideoP
 			encoder = ffmpeg.VP8
 		case net.VideoProfile_VP9:
 			encoder = ffmpeg.VP9
+		case net.VideoProfile_AV1:
+			encoder = ffmpeg.AV1
 		default:
 			return nil, errEncoder
 		}

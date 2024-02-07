@@ -231,6 +231,8 @@ func FFmpegProfiletoNetProfile(ffmpegProfiles []ffmpeg.VideoProfile) ([]*net.Vid
 			encoder = net.VideoProfile_VP8
 		case ffmpeg.VP9:
 			encoder = net.VideoProfile_VP9
+		case ffmpeg.AV1:
+			encoder = net.VideoProfile_AV1
 		default:
 			return nil, ErrProfEncoder
 		}
