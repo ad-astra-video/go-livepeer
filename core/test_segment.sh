@@ -24,6 +24,10 @@ echo "var testSegment_VP9 = []byte{" >> $FILE
 ffmpeg -f lavfi -i color=white:s=144x144 -vframes 5  -c:v libvpx-vp9 -f webm - | gzip -9 | xxd -i | awk 'NR > 1 { print prev } { prev=$0 } END { ORS=""; print }' >> $FILE
 echo "}" >> $FILE
 
+echo "var testSegment_AV1 = []byte{" >> $FILE
+ffmpeg -f lavfi -i color=white:s=144x144 -vframes 5  -c:v libsvtav1 -f mp4 - | gzip -9 | xxd -i | awk 'NR > 1 { print prev } { prev=$0 } END { ORS=""; print }' >> $FILE
+echo "}" >> $FILE
+
 echo "var testSegment_H264_444_8bit = []byte{" >> $FILE
 ffmpeg -f lavfi -i color=white:s=144x144 -vframes 5 -pix_fmt yuv444p -c:v libx264 -f mpegts - |  \
   ffmpeg -f mpegts -i pipe:0 -c:v copy  \

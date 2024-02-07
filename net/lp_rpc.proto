@@ -256,6 +256,7 @@ message VideoProfile {
     H265 = 1;
     VP8  = 2;
     VP9  = 3;
+    AV1  = 4;
   }
 
   // Encoder (video codec)
