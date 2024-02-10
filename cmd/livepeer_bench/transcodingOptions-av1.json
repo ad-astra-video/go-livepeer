@@ -6,7 +6,10 @@
   "width": 426,
   "height": 240,
   "gop": "1",
-  "encoder": "AV1"
+  "encoder": "AV1",
+  "profile": "",
+  "format": "mp4"
+
 },
 {
   "name": "360p0",
@@ -15,7 +18,9 @@
   "width": 640,
   "height": 360,
   "gop": "1",
-  "encoder": "AV1"
+  "encoder": "AV1",
+  "profile": "",
+  "format": "mp4"
 },
 {
   "name": "480p0",
@@ -24,7 +29,9 @@
   "width": 854,
   "height": 480,
   "gop": "1",
-  "encoder": "AV1"
+  "encoder": "AV1",
+  "profile": "",
+  "format": "mp4"
 },
 {
   "name": "720p0",
@@ -33,6 +40,8 @@
   "width": 1280,
   "height": 720,
   "gop": "1",
-  "encoder": "AV1"
+  "encoder": "AV1",
+  "profile": "",
+  "format": "mp4"
 }
 ]
