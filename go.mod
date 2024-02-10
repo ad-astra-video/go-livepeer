@@ -28,6 +28,7 @@ require (
 	go.uber.org/goleak v1.3.0
 	golang.org/x/net v0.17.0
 	google.golang.org/grpc v1.57.1
+	google.golang.org/protobuf v1.30.0
 	pgregory.net/rapid v1.1.0
 )
 
@@ -140,11 +141,10 @@ require (
 	google.golang.org/genproto v0.0.0-20230526161137-0005af68ea54 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20230525234035-dd9d682886f9 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20230525234030-28d5490b6b19 // indirect
-	google.golang.org/protobuf v1.30.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	howett.net/plist v1.0.0 // indirect
 	rsc.io/tmplfunc v0.0.3 // indirect
 )
 
-replace github.com/livepeer/lpms => github.com/ad-astra-video/lpms v0.0.0-20240205001713-2e3d04bf4b41
+replace github.com/livepeer/lpms => github.com/ad-astra-video/lpms v0.0.0-20240209023217-638a979b46e8
