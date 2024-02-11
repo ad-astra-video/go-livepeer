@@ -16,8 +16,10 @@ import (
 	"github.com/livepeer/go-livepeer/monitor"
 	"github.com/livepeer/go-livepeer/net"
 	"github.com/livepeer/go-livepeer/server"
-
+	
 	"github.com/golang/glog"
+
+	ethcommon "github.com/ethereum/go-ethereum/common"
 )
 
 var getOrchestratorsTimeoutLoop = 3 * time.Second
@@ -103,6 +105,7 @@ func (o *orchestratorPool) GetOrchestrators(ctx context.Context, numOrchestrator
 			}
 			return false
 		}
+		glog.Infof("orch not compatible: %v", ethcommon.BytesToAddress(info.TicketParams.Recipient).Hex())
 		return caps.CompatibleWith(info.Capabilities)
 	}
 	getOrchInfo := func(ctx context.Context, od common.OrchestratorDescriptor, infoCh chan common.OrchestratorDescriptor, errCh chan error) {
