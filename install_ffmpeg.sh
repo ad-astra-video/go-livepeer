@@ -116,7 +116,7 @@ if [[ "$GOOS" != "darwin" ]]; then
   if [[ ! -e "$ROOT/nv-codec-headers" ]]; then
     git clone https://git.videolan.org/git/ffmpeg/nv-codec-headers.git "$ROOT/nv-codec-headers"
     cd $ROOT/nv-codec-headers
-    git checkout n12.1.14.0
+    git checkout tags/n12.1.14.0
     make -e PREFIX="$ROOT/compiled"
     make install -e PREFIX="$ROOT/compiled"
   fi
