@@ -147,4 +147,4 @@ require (
 	rsc.io/tmplfunc v0.0.3 // indirect
 )
 
-replace github.com/livepeer/lpms => github.com/ad-astra-video/lpms v0.0.0-20240209023217-638a979b46e8
+replace github.com/livepeer/lpms => github.com/ad-astra-video/lpms v0.0.0-20240211140253-2bd635e4c6b7
