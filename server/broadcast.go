@@ -523,7 +523,7 @@ func (bs *BroadcastSession) pushSegInFlight(seg *stream.HLSSegment) {
 }
 
 // selects broadcast sessions for specified orchestrator
-func (bsm *BroadcastSessionsManager) selectSessionsManual(ctx context.Context, orchAddr string) (bs []*BroadcastSession, calcPerceptualHash bool, verified bool) {
+func (bsm *BroadcastSessionsManager) selectSessionsManual(ctx context.Context, orchAddr string, params *core.StreamParameters) (bs []*BroadcastSession, calcPerceptualHash bool, verified bool) {
 	bsm.sessLock.Lock()
 	defer bsm.sessLock.Unlock()
 	clog.V(common.DEBUG).Infof(ctx, "Searching %v trusted and %v untrusted seesions for orchAddr=%v", len(bsm.trustedPool.sessMap), len(bsm.untrustedPool.sessMap), orchAddr)
@@ -582,20 +582,13 @@ func (bsm *BroadcastSessionsManager) selectSessionsManual(ctx context.Context, o
 	}
 
 	//create a broadcast session if the orchAddr passed is a url
-	if len(sessions) == 0 && len(bsm.untrustedPool.sessMap) > 0 {
+	if len(sessions) == 0 {
 		oUrl, err := url.ParseRequestURI(orchAddr)
 		if err == nil {
-			//get broadcaster and stream params from another session.  first session stream params should be same as all, exit loop after first session.
-			var params core.StreamParameters
-			for _, s := range bsm.untrustedPool.sessMap {
-				params = *s.Params
-				break
-			}
-
 			oInfo, oErr := getOrchestratorInfoRPC(ctx, core.NewBroadcaster(bsm.LivepeerNode), oUrl)
 			if oErr == nil {
 				od := common.OrchestratorDescriptor{LocalInfo: nil, RemoteInfo: oInfo}
-				sess := newBroadcastSession(ctx, od, bsm.LivepeerNode, &params)
+				sess := newBroadcastSession(ctx, od, bsm.LivepeerNode, params)
 				sessions = append(sessions, sess)
 				//add to untrusted pool so do not have to create again
 				bsm.untrustedPool.sessMap[oUrl.RequestURI()] = sess
@@ -1163,7 +1156,7 @@ func transcodeSegment(ctx context.Context, cxn *rtmpConnection, seg *stream.HLSS
 	clog.Infof(ctx, "Selection sessions, orchAddr=%v", orchAddr)
 
 	if orchAddr != "" {
-		sessions, calcPerceptualHash, verified = cxn.sessManager.selectSessionsManual(ctx, orchAddr)
+		sessions, calcPerceptualHash, verified = cxn.sessManager.selectSessionsManual(ctx, orchAddr, cxn.params)
 	} else {
 		sessions, calcPerceptualHash, verified = cxn.sessManager.selectSessions(ctx)
 	}
