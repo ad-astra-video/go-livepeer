@@ -116,6 +116,7 @@ if [[ "$GOOS" != "darwin" ]]; then
   if [[ ! -e "$ROOT/nv-codec-headers" ]]; then
     git clone https://git.videolan.org/git/ffmpeg/nv-codec-headers.git "$ROOT/nv-codec-headers"
     cd $ROOT/nv-codec-headers
+    #update to latest release
     git checkout tags/n12.1.14.0
     make -e PREFIX="$ROOT/compiled"
     make install -e PREFIX="$ROOT/compiled"
@@ -141,13 +142,15 @@ fi
 if [[ ! -e "$ROOT/x264" ]]; then
   git clone http://git.videolan.org/git/x264.git "$ROOT/x264"
   cd "$ROOT/x264"
-  if [[ $GOARCH == "arm64" ]]; then
-    # newer git master, compiles on Apple Silicon
-    git checkout 66a5bc1bd1563d8227d5d18440b525a09bcf17ca
-  else
-    # older git master, does not compile on Apple Silicon
-    git checkout 545de2ffec6ae9a80738de1b2c8cf820249a2530
-  fi
+  #if [[ $GOARCH == "arm64" ]]; then
+  #  # newer git master, compiles on Apple Silicon
+  #  git checkout 66a5bc1bd1563d8227d5d18440b525a09bcf17ca
+  #else
+  #  # older git master, does not compile on Apple Silicon
+  #  git checkout 545de2ffec6ae9a80738de1b2c8cf820249a2530
+  #fi
+  #update to latest master
+  git checkout be4f0200ed007c466fd96185c39cde2a2d60ef50
   ./configure --prefix="$ROOT/compiled" --enable-pic --enable-static ${HOST_OS:-} --disable-cli --extra-cflags="$EXTRA_CFLAGS" --extra-asflags="$EXTRA_CFLAGS" --extra-ldflags="$EXTRA_LDFLAGS" $EXTRA_X264_FLAGS || (cat $ROOT/x264/config.log && exit 1)
   make -j$NPROC
   make -j$NPROC install-lib-static
@@ -158,7 +161,9 @@ if [[ "$GOOS" == "linux" && "$BUILD_TAGS" == *"debug-video"* ]]; then
   if [[ ! -e "$ROOT/x265" ]]; then
     git clone https://bitbucket.org/multicoreware/x265_git.git "$ROOT/x265"
     cd "$ROOT/x265"
-    git checkout 17839cc0dc5a389e27810944ae2128a65ac39318
+    #git checkout 17839cc0dc5a389e27810944ae2128a65ac39318
+    #update to 2024-01-23 commit
+    git checkout 74abf80c70a3969fca2e112691cecfb50c0c2259
     cd build/linux/
     cmake -DCMAKE_INSTALL_PREFIX=$ROOT/compiled -G "Unix Makefiles" ../../source
     make -j$NPROC
@@ -168,7 +173,9 @@ if [[ "$GOOS" == "linux" && "$BUILD_TAGS" == *"debug-video"* ]]; then
   if [[ ! -e "$ROOT/libvpx" ]]; then
     git clone https://chromium.googlesource.com/webm/libvpx.git "$ROOT/libvpx"
     cd "$ROOT/libvpx"
-    git checkout ab35ee100a38347433af24df05a5e1578172a2ae
+    #git checkout ab35ee100a38347433af24df05a5e1578172a2ae
+    #update to latest release
+    git checkout tags/v1.14.0
     ./configure --prefix="$ROOT/compiled" --disable-examples --disable-unit-tests --enable-vp9-highbitdepth --enable-shared --as=nasm
     make -j$NPROC
     make -j$NPROC install
@@ -183,10 +190,10 @@ DEV_FFMPEG_FLAGS=""
 if [[ "$BUILDOS" == "darwin" && "$GOOS" == "darwin" ]]; then
   EXTRA_FFMPEG_LDFLAGS="$EXTRA_FFMPEG_LDFLAGS -framework CoreFoundation -framework Security"
 elif [[ "$GOOS" == "windows" ]]; then
-  EXTRA_FFMPEG_FLAGS="$EXTRA_FFMPEG_FLAGS --enable-cuda --enable-cuda-llvm --enable-cuvid --enable-nvenc --enable-decoder=h264_cuvid,hevc_cuvid,vp8_cuvid,vp9_cuvid,av1_cuvid --enable-filter=scale_cuda,signature_cuda,hwupload_cuda --enable-encoder=h264_nvenc,hevc_nvenc,av1_nvenc"
+  EXTRA_FFMPEG_FLAGS="$EXTRA_FFMPEG_FLAGS --enable-cuda --enable-cuda-llvm --enable-nvdec --enable-cuvid --enable-nvenc --enable-decoder=h264_cuvid,hevc_cuvid,vp8_cuvid,vp9_cuvid,av1_cuvid --enable-filter=scale_cuda,signature_cuda,hwupload_cuda --enable-encoder=h264_nvenc,hevc_nvenc,av1_nvenc"
 elif [[ -e "/usr/local/cuda/lib64" ]]; then
   echo "CUDA SDK detected, building with GPU support"
-  EXTRA_FFMPEG_FLAGS="$EXTRA_FFMPEG_FLAGS --enable-nonfree --enable-cuda-nvcc --enable-libnpp --enable-cuda --enable-cuda-llvm --enable-cuvid --enable-nvenc --enable-decoder=h264_cuvid,hevc_cuvid,vp8_cuvid,vp9_cuvid,av1_cuvid --enable-filter=scale_npp,signature_cuda,hwupload_cuda --enable-encoder=h264_nvenc,hevc_nvenc,av1_nvenc"
+  EXTRA_FFMPEG_FLAGS="$EXTRA_FFMPEG_FLAGS --enable-nonfree --enable-cuda-nvcc --enable-libnpp --enable-cuda --enable-cuda-llvm --enable-nvdec --enable-cuvid --enable-nvenc --enable-decoder=h264_cuvid,hevc_cuvid,vp8_cuvid,vp9_cuvid,av1_cuvid --enable-filter=scale_npp,signature_cuda,hwupload_cuda --enable-encoder=h264_nvenc,hevc_nvenc,av1_nvenc"
 else
   echo "No CUDA SDK detected, building without GPU support"
 fi
@@ -206,7 +213,7 @@ if [[ ! -e "$ROOT/ffmpeg/libavcodec/libavcodec.a" ]]; then
   #git clone https://github.com/livepeer/FFmpeg.git "$ROOT/ffmpeg" || echo "FFmpeg dir already exists"
   git clone https://github.com/ad-astra-video/FFmpeg.git "$ROOT/ffmpeg" || echo "FFmpeg dir already exists"
   cd "$ROOT/ffmpeg"
-  git checkout origin/update-ffmpeg
+  git checkout origin/update-ffmpeg-6.1.1
   ./configure ${TARGET_OS:-} $DISABLE_FFMPEG_COMPONENTS --fatal-warnings \
     --enable-libx264 --enable-gpl \
     --enable-protocol=rtmp,file,pipe \
