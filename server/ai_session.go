@@ -42,14 +42,19 @@ func NewAISessionPool(selector BroadcastSessionsSelector, suspender *suspender) 
 }
 
 func (pool *AISessionPool) Select(ctx context.Context) *BroadcastSession {
+	clog.V(common.DEBUG).Infof(ctx, "selecting session - sessMap size: %d", pool.Size())
 	pool.mu.Lock()
 	defer pool.mu.Unlock()
-
 	for {
 		sess := pool.selector.Select(ctx)
 		if sess == nil {
+			clog.V(common.DEBUG).Infof(ctx, "no session from selector, getting session in use")
 			sess = pool.selectInUse()
 		} else {
+			if len(sess.SegsInFlight) > 0 {
+				clog.V(common.DEBUG).Infof(ctx, "getting new session, session in use")
+				continue
+			}
 			// Track in-use session the first time it is returned by the selector
 			pool.inUseSess = append(pool.inUseSess, sess)
 		}
@@ -220,14 +225,22 @@ func (sel *AISessionSelector) Select(ctx context.Context) *AISession {
 		}
 	}
 
-	sess := sel.warmPool.Select(ctx)
-	if sess != nil {
-		return &AISession{BroadcastSession: sess, Cap: sel.cap, ModelID: sel.modelID, Warm: true}
+	var sess *BroadcastSession
+
+	if sel.warmPool.Size() > 0 {
+		clog.V(common.DEBUG).Infof(ctx, "selecting from warm pool")
+		sess = sel.warmPool.Select(ctx)
+		if sess != nil {
+			return &AISession{BroadcastSession: sess, Cap: sel.cap, ModelID: sel.modelID, Warm: true}
+		}
 	}
 
-	sess = sel.coldPool.Select(ctx)
-	if sess != nil {
-		return &AISession{BroadcastSession: sess, Cap: sel.cap, ModelID: sel.modelID, Warm: false}
+	if sel.coldPool.Size() > 0 {
+		clog.V(common.DEBUG).Infof(ctx, "selecting from cold pool")
+		sess = sel.coldPool.Select(ctx)
+		if sess != nil {
+			return &AISession{BroadcastSession: sess, Cap: sel.cap, ModelID: sel.modelID, Warm: false}
+		}
 	}
 
 	return nil
@@ -254,7 +267,7 @@ func (sel *AISessionSelector) Refresh(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-
+	clog.V(common.DEBUG).Infof(ctx, "sessions added: %d", len(sessions))
 	var warmSessions []*BroadcastSession
 	var coldSessions []*BroadcastSession
 	for _, sess := range sessions {
@@ -279,7 +292,8 @@ func (sel *AISessionSelector) Refresh(ctx context.Context) error {
 
 	sel.warmPool.Add(warmSessions)
 	sel.coldPool.Add(coldSessions)
-
+	clog.V(common.DEBUG).Infof(ctx, "warm sessions: %d", len(warmSessions))
+	clog.V(common.DEBUG).Infof(ctx, "cold sessions: %d", len(coldSessions))
 	sel.lastRefreshTime = time.Now()
 
 	return nil
@@ -301,7 +315,6 @@ func (sel *AISessionSelector) getSessions(ctx context.Context) ([]*BroadcastSess
 
 	// Set numOrchs to the pool size so that discovery tries to find maximum # of compatible orchs within a timeout
 	numOrchs := sel.node.OrchestratorPool.Size()
-
 	// Use a dummy manifestID specific to the capability + modelID
 	// Typically, a manifestID would identify a stream
 	// In the AI context, a manifestID can identify a capability + modelID and each
@@ -353,6 +366,7 @@ func (c *AISessionManager) Select(ctx context.Context, cap core.Capability, mode
 		}
 	}
 
+	clog.Infof(ctx, "session selected orchestrator=%s", sess.Transcoder())
 	return sess, nil
 }
 

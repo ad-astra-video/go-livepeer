@@ -320,9 +320,10 @@ func processAIRequest(ctx context.Context, params aiRequestParams, req interface
 	expb.MaxElapsedTime = 500 * time.Millisecond
 
 	backoff.Retry(func() error {
+		tries++
 		sess, err := params.sessManager.Select(ctx, cap, modelID)
 		if err != nil {
-			clog.Infof(ctx, "Error selecting session cap=%v modelID=%v err=%v", cap, modelID, err)
+			clog.V(common.DEBUG).Infof(ctx, "Error selecting session cap=%v modelID=%v err=%v", cap, modelID, err)
 			return err
 		}
 
@@ -333,19 +334,16 @@ func processAIRequest(ctx context.Context, params aiRequestParams, req interface
 
 		resp, err = submitFn(ctx, params, sess)
 		if err == nil {
+			clog.V(common.DEBUG).Infof(ctx, "request completed, returning session to selector")
+			sess.LatencyScore = float64(took.Milliseconds())
 			params.sessManager.Complete(ctx, sess)
 			//consider defining some nonretryable errors and do expb.Stop
 			return nil
 		}
 
-		clog.Infof(ctx, "Error submitting request cap=%v modelID=%v try=%v orch=%v err=%v", cap, modelID, tries, sess.Transcoder(), err)
-		if err == errors.New("insufficient capacity") {
-			return err
-		} else {
-			//other error
-			params.sessManager.Remove(ctx, sess)
-			return err
-		}
+		clog.Infof(ctx, "Error submitting request cap=%v modelID=%v try=%v orch=%v err=no capacity, trying again", cap, modelID, tries, sess.Transcoder())
+		params.sessManager.Remove(ctx, sess)
+		return err
 
 	}, expb)
 
