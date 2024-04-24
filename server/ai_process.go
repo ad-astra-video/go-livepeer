@@ -12,7 +12,9 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"time"
 
+	"github.com/cenkalti/backoff"
 	"github.com/livepeer/ai-worker/worker"
 	"github.com/livepeer/go-livepeer/clog"
 	"github.com/livepeer/go-livepeer/common"
@@ -312,29 +314,40 @@ func processAIRequest(ctx context.Context, params aiRequestParams, req interface
 	var resp *worker.ImageResponse
 
 	tries := 0
-	for tries < maxProcessingRetries {
-		tries++
+	expb := backoff.NewExponentialBackOff()
+	expb.InitialInterval = 100 * time.Millisecond
+	expb.MaxInterval = 200 * time.Millisecond
+	expb.MaxElapsedTime = 500 * time.Millisecond
 
+	backoff.Retry(func() error {
 		sess, err := params.sessManager.Select(ctx, cap, modelID)
 		if err != nil {
 			clog.Infof(ctx, "Error selecting session cap=%v modelID=%v err=%v", cap, modelID, err)
-			continue
+			return err
 		}
 
+		//no session available on first selection, continue retry loop
 		if sess == nil {
-			break
+			return errors.New("no session found")
 		}
 
 		resp, err = submitFn(ctx, params, sess)
 		if err == nil {
 			params.sessManager.Complete(ctx, sess)
-			break
+			//consider defining some nonretryable errors and do expb.Stop
+			return nil
 		}
 
 		clog.Infof(ctx, "Error submitting request cap=%v modelID=%v try=%v orch=%v err=%v", cap, modelID, tries, sess.Transcoder(), err)
+		if err == errors.New("insufficient capacity") {
+			return err
+		} else {
+			//other error
+			params.sessManager.Remove(ctx, sess)
+			return err
+		}
 
-		params.sessManager.Remove(ctx, sess)
-	}
+	}, expb)
 
 	if resp == nil {
 		return nil, &ServiceUnavailableError{err: errors.New("no orchestrators available")}
