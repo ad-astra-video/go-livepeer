@@ -332,7 +332,9 @@ func processAIRequest(ctx context.Context, params aiRequestParams, req interface
 			return errors.New("no session found")
 		}
 
+		start := time.Now()
 		resp, err = submitFn(ctx, params, sess)
+		took := time.Now().Sub(start)
 		if err == nil {
 			clog.V(common.DEBUG).Infof(ctx, "request completed, returning session to selector")
 			sess.LatencyScore = float64(took.Milliseconds())
