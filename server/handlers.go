@@ -210,6 +210,63 @@ func getAvailableTranscodingOptionsHandler() http.Handler {
 	})
 }
 
+func (s *LivepeerServer) getAIPoolsHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		aiPoolInfoResp := make(map[string]interface{})
+
+		glog.V(common.DEBUG).Infof("getting AI pool info for %d selectors", len(s.AISessionManager.selectors))
+		s.AISessionManager.mu.Lock()
+		defer s.AISessionManager.mu.Unlock()
+		showDetail := r.Header.Get("Show-Detail")
+		for cap, pool := range s.AISessionManager.selectors {
+			capPools := make(map[string]interface{})
+			glog.Infof("getting AI pool info for %s", cap)
+
+			warmPoolInfo := make(map[string]interface{})
+			coldPoolInfo := make(map[string]interface{})
+			//get warmPool info
+			warmPoolInfo["Size"] = pool.warmPool.Size()
+			warmPoolInfo["InUse"] = len(pool.warmPool.inUseSess)
+			if showDetail != "" {
+				var warmOrchInfos []interface{}
+				for _, sess := range pool.warmPool.sessMap {
+					orchInfo := make(map[string]interface{})
+					orchInfo["Url"] = sess.Transcoder()
+					orchInfo["Latency"] = sess.LatencyScore
+					orchInfo["InFlight"] = len(sess.SegsInFlight)
+
+					warmOrchInfos = append(warmOrchInfos, orchInfo)
+				}
+				warmPoolInfo["Orchestrators"] = warmOrchInfos
+			}
+			capPools["Warm"] = warmPoolInfo
+
+			//get coldPool info
+			coldPoolInfo["Size"] = pool.coldPool.Size()
+			coldPoolInfo["InUse"] = len(pool.coldPool.inUseSess)
+			coldPoolInfo["Suspended"] = len(pool.coldPool.suspender.list)
+			if showDetail != "" {
+				var coldOrchInfos []interface{}
+				for _, sess := range pool.coldPool.sessMap {
+					orchInfo := make(map[string]interface{})
+					orchInfo["Url"] = sess.Transcoder()
+					orchInfo["Latency"] = sess.LatencyScore
+					orchInfo["InFlight"] = len(sess.SegsInFlight)
+
+					coldOrchInfos = append(coldOrchInfos, orchInfo)
+				}
+				coldPoolInfo["Orchestrators"] = coldOrchInfos
+			}
+			capPools["Cold"] = coldPoolInfo
+
+			aiPoolInfoResp[cap] = capPools
+		}
+
+		glog.V(common.DEBUG).Infof("sending AI pool info for %d selectors", len(s.AISessionManager.selectors))
+		respondJson(w, aiPoolInfoResp)
+	})
+}
+
 // Rounds
 func currentRoundHandler(client eth.LivepeerEthClient) http.Handler {
 	return mustHaveClient(client, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
