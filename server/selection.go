@@ -3,7 +3,6 @@ package server
 import (
 	"container/heap"
 	"context"
-	"fmt"
 
 	ethcommon "github.com/ethereum/go-ethereum/common"
 	"github.com/livepeer/go-livepeer/clog"
@@ -139,8 +138,6 @@ func (s *MinLSSelector) Select(ctx context.Context) *BroadcastSession {
 	sess := s.knownSessions.Peek()
 	if sess == nil {
 		return s.selectUnknownSession(ctx)
-	} else {
-		fmt.Printf("using known session: %s", sess.(*BroadcastSession).Transcoder())
 	}
 
 	minSess := sess.(*BroadcastSession)

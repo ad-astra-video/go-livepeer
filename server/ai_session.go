@@ -48,13 +48,9 @@ func (pool *AISessionPool) Select(ctx context.Context) *BroadcastSession {
 	for {
 		sess := pool.selector.Select(ctx)
 		if sess == nil {
-			clog.V(common.DEBUG).Infof(ctx, "no session from selector, getting session in use")
+			clog.V(common.DEBUG).Infof(ctx, "no session from selector, trying sessions in use")
 			sess = pool.selectInUse()
 		} else {
-			if len(sess.SegsInFlight) > 0 {
-				clog.V(common.DEBUG).Infof(ctx, "getting new session, session in use")
-				continue
-			}
 			// Track in-use session the first time it is returned by the selector
 			pool.inUseSess = append(pool.inUseSess, sess)
 		}
