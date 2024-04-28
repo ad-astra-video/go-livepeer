@@ -104,6 +104,7 @@ type LivepeerConfig struct {
 	Region                 *string
 	MaxPricePerUnit        *int
 	MinPerfScore           *float64
+	NaiveSelection         *bool
 	MaxSessions            *string
 	CurrentManifest        *bool
 	Nvidia                 *string
@@ -178,6 +179,7 @@ func DefaultLivepeerConfig() LivepeerConfig {
 	defaultOrchPerfStatsURL := ""
 	defaultRegion := ""
 	defaultMinPerfScore := 0.0
+	defaultNaiveSelection := false
 	defaultCurrentManifest := false
 	defaultNvidia := ""
 	defaultNetint := ""
@@ -267,6 +269,7 @@ func DefaultLivepeerConfig() LivepeerConfig {
 		OrchPerfStatsURL:     &defaultOrchPerfStatsURL,
 		Region:               &defaultRegion,
 		MinPerfScore:         &defaultMinPerfScore,
+		NaiveSelection:       &defaultNaiveSelection,
 		CurrentManifest:      &defaultCurrentManifest,
 		Nvidia:               &defaultNvidia,
 		Netint:               &defaultNetint,
@@ -500,6 +503,9 @@ func StartLivepeer(ctx context.Context, cfg LivepeerConfig) {
 	constraints := make(map[core.Capability]*core.Constraints)
 
 	if *cfg.AIWorker {
+
+		//force naive selection, don't want to use knownSessions for re-used selector
+		n.NaiveSelection = true
 		gpus := []string{}
 		if *cfg.Nvidia != "" {
 			var err error
@@ -1154,6 +1160,9 @@ func StartLivepeer(ctx context.Context, cfg LivepeerConfig) {
 			n.OrchPerfScore = &common.PerfScore{Scores: make(map[ethcommon.Address]float64)}
 			go refreshOrchPerfScoreLoop(ctx, strings.ToUpper(*cfg.Region), *cfg.OrchPerfStatsURL, n.OrchPerfScore)
 		}
+
+		//setup preference of selecting sessions using current performance data
+		n.NaiveSelection = *cfg.NaiveSelection
 
 		// When the node is on-chain mode always cache the on-chain orchestrators and poll for updates
 		// Right now we rely on the DBOrchestratorPoolCache constructor to do this. Consider separating the logic

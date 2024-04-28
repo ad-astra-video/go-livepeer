@@ -4,10 +4,11 @@ import (
 	"container/heap"
 	"context"
 	"errors"
+	"testing"
+
 	"github.com/livepeer/go-livepeer/core"
 	"github.com/livepeer/go-livepeer/net"
 	"github.com/stretchr/testify/require"
-	"testing"
 
 	ethcommon "github.com/ethereum/go-ethereum/common"
 	"github.com/livepeer/go-livepeer/common"
@@ -158,7 +159,7 @@ func TestSessHeap(t *testing.T) {
 func TestMinLSSelector(t *testing.T) {
 	assert := assert.New(t)
 
-	sel := NewMinLSSelector(nil, 1.0, stubSelectionAlgorithm{}, nil)
+	sel := NewMinLSSelector(nil, 1.0, stubSelectionAlgorithm{}, nil, false)
 	assert.Zero(sel.Size())
 
 	sessions := []*BroadcastSession{
@@ -234,7 +235,7 @@ func TestMinLSSelector(t *testing.T) {
 func TestMinLSSelector_RemoveUnknownSession(t *testing.T) {
 	assert := assert.New(t)
 
-	sel := NewMinLSSelector(nil, 1.0, stubSelectionAlgorithm{}, nil)
+	sel := NewMinLSSelector(nil, 1.0, stubSelectionAlgorithm{}, nil, false)
 
 	// Use ManifestID to identify each session
 	sessions := []*BroadcastSession{
@@ -335,7 +336,7 @@ func TestMinLSSelector_SelectUnknownSession(t *testing.T) {
 			if tt.perfScores != nil {
 				perfScore = &common.PerfScore{Scores: tt.perfScores}
 			}
-			sel := NewMinLSSelector(stakeRdr, 1.0, selAlg, perfScore)
+			sel := NewMinLSSelector(stakeRdr, 1.0, selAlg, perfScore, false)
 			sel.Add(tt.unknownSessions)
 
 			sess := sel.selectUnknownSession(context.TODO())
@@ -366,7 +367,7 @@ func session(recipientAddr string) *BroadcastSession {
 }
 
 func TestMinLSSelector_SelectUnknownSession_NilStakeReader(t *testing.T) {
-	sel := NewMinLSSelector(nil, 1.0, stubSelectionAlgorithm{}, nil)
+	sel := NewMinLSSelector(nil, 1.0, stubSelectionAlgorithm{}, nil, false)
 
 	sessions := make([]*BroadcastSession, 10)
 	for i := 0; i < 10; i++ {
