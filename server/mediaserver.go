@@ -525,7 +525,7 @@ func (s *LivepeerServer) registerConnection(ctx context.Context, rtmpStrm stream
 		stakeRdr = &storeStakeReader{store: s.LivepeerNode.Database}
 	}
 	selFactory := func() BroadcastSessionsSelector {
-		return NewMinLSSelector(stakeRdr, SELECTOR_LATENCY_SCORE_THRESHOLD, s.LivepeerNode.SelectionAlgorithm, s.LivepeerNode.OrchPerfScore)
+		return NewMinLSSelector(stakeRdr, SELECTOR_LATENCY_SCORE_THRESHOLD, s.LivepeerNode.SelectionAlgorithm, s.LivepeerNode.OrchPerfScore, s.LivepeerNode.NaiveSelection)
 	}
 
 	// safe, because other goroutines should be waiting on initializing channel
@@ -867,6 +867,7 @@ func (s *LivepeerServer) HandlePush(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		ctx = context.WithValue(ctx, "naiveSelection", s.LivepeerNode.NaiveSelection)
 		cxn, err = s.registerConnection(ctx, st, vcodec, mediaFormat.PixFormat, &segPar)
 		if err != nil {
 			st.Close()
