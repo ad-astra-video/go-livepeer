@@ -215,8 +215,19 @@ func (sel *AISessionSelector) Select(ctx context.Context) *AISession {
 		discoveryPoolSize := int(math.Min(float64(sel.node.OrchestratorPool.Size()), float64(sel.initialPoolSize)))
 		clog.V(common.DEBUG).Infof(ctx, "selecting sessions - discoveryPoolSize: %d", discoveryPoolSize, sel.initialPoolSize)
 
+		if sel.warmPool.Size()+sel.coldPool.Size() == 0 {
+			//release all orchestrators from suspension and try refresh
+			//update if penalty is not 3
+			clog.Infof(ctx, "refreshing sessions, no orchestrators in pools")
+			for i := 0; i < 3; i++ {
+				sel.suspender.signalRefresh()
+			}
+
+			return true
+		}
+
 		if sel.warmPool.Size()+sel.coldPool.Size() < int(math.Min(maxRefreshSessionsThreshold, math.Ceil(float64(discoveryPoolSize)/2.0))) {
-			clog.V(common.DEBUG).Infof(ctx, "refreshing sessions, not enough in selector")
+			clog.Infof(ctx, "refreshing sessions, not enough in selector")
 			return true
 		}
 
