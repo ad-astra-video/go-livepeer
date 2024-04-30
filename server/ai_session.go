@@ -42,9 +42,15 @@ func NewAISessionPool(selector BroadcastSessionsSelector, suspender *suspender) 
 }
 
 func (pool *AISessionPool) Select(ctx context.Context) *BroadcastSession {
-	clog.V(common.DEBUG).Infof(ctx, "selecting session - sessMap size: %d", pool.Size())
+	clog.V(common.DEBUG).Infof(ctx, "selecting session - pool_size=%d selector_size=%d suspended= %d", pool.Size(), pool.selector.Size(), pool.suspender.count)
 	pool.mu.Lock()
 	defer pool.mu.Unlock()
+	//signal refresh on each selection
+	pool.suspender.signalRefresh()
+
+	for orch, penalty := range pool.suspender.list {
+		clog.Infof(ctx, "orch: %s, free at: %d", orch, penalty)
+	}
 	for {
 		sess := pool.selector.Select(ctx)
 		if sess == nil {
@@ -102,10 +108,6 @@ func (pool *AISessionPool) Add(sessions []*BroadcastSession) {
 	pool.mu.Lock()
 	defer pool.mu.Unlock()
 
-	// If we try to add new sessions to the pool the suspender
-	// should treat this as a refresh
-	pool.suspender.signalRefresh()
-
 	var uniqueSessions []*BroadcastSession
 	for _, sess := range sessions {
 		if _, ok := pool.sessMap[sess.Transcoder()]; ok {
@@ -130,7 +132,15 @@ func (pool *AISessionPool) Remove(sess *BroadcastSession) {
 	// Magic number for now
 	penalty := 3
 	// If this method is called assume that the orch should be suspended
-	// as well
+	// as well.  Since we re-use the selector the suspension does not start at 3.
+	// it should start at current suspender.count + 3
+	last_count, ok := pool.suspender.list[sess.Transcoder()]
+	if ok {
+		penalty = pool.suspender.count - last_count + penalty
+	} else {
+		penalty = pool.suspender.count + penalty
+	}
+
 	pool.suspender.suspend(sess.Transcoder(), penalty)
 }
 
@@ -157,6 +167,7 @@ type AISessionSelector struct {
 	// The time until the pools should be refreshed with orchs from discovery
 	ttl             time.Duration
 	lastRefreshTime time.Time
+	initialPoolSize int
 
 	cap     core.Capability
 	modelID string
@@ -201,13 +212,23 @@ func (sel *AISessionSelector) Select(ctx context.Context) *AISession {
 	shouldRefreshSelector := func() bool {
 		// Refresh if the # of sessions across warm and cold pools falls below the smaller of the maxRefreshSessionsThreshold and
 		// 1/2 the total # of orchs that can be queried during discovery
-		discoveryPoolSize := sel.node.OrchestratorPool.Size()
+		discoveryPoolSize := int(math.Min(float64(sel.node.OrchestratorPool.Size()), float64(sel.initialPoolSize)))
+		clog.V(common.DEBUG).Infof(ctx, "selecting sessions - discoveryPoolSize: %d", discoveryPoolSize, sel.initialPoolSize)
+
 		if sel.warmPool.Size()+sel.coldPool.Size() < int(math.Min(maxRefreshSessionsThreshold, math.Ceil(float64(discoveryPoolSize)/2.0))) {
+			clog.V(common.DEBUG).Infof(ctx, "refreshing sessions, not enough in selector")
 			return true
 		}
 
 		// Refresh if the selector has expired
 		if time.Now().After(sel.lastRefreshTime.Add(sel.ttl)) {
+			return true
+		}
+
+		// Refresh if suspended sessions are now available
+		// only need one now free, all will be picked up in refresh
+		for orch, _ := range sel.suspender.list {
+			sel.suspender.Suspended(orch)
 			return true
 		}
 
@@ -224,7 +245,7 @@ func (sel *AISessionSelector) Select(ctx context.Context) *AISession {
 	var sess *BroadcastSession
 
 	if sel.warmPool.Size() > 0 {
-		clog.V(common.DEBUG).Infof(ctx, "selecting from warm pool")
+		clog.V(common.DEBUG).Infof(ctx, "selecting from warm pool, size: %d", sel.warmPool.Size())
 		sess = sel.warmPool.Select(ctx)
 		if sess != nil {
 			return &AISession{BroadcastSession: sess, Cap: sel.cap, ModelID: sel.modelID, Warm: true}
@@ -232,7 +253,7 @@ func (sel *AISessionSelector) Select(ctx context.Context) *AISession {
 	}
 
 	if sel.coldPool.Size() > 0 {
-		clog.V(common.DEBUG).Infof(ctx, "selecting from cold pool")
+		clog.V(common.DEBUG).Infof(ctx, "selecting from cold pool, size: %d", sel.coldPool.Size())
 		sess = sel.coldPool.Select(ctx)
 		if sess != nil {
 			return &AISession{BroadcastSession: sess, Cap: sel.cap, ModelID: sel.modelID, Warm: false}
@@ -256,6 +277,7 @@ func (sel *AISessionSelector) Remove(sess *AISession) {
 	} else {
 		sel.coldPool.Remove(sess.BroadcastSession)
 	}
+
 }
 
 func (sel *AISessionSelector) Refresh(ctx context.Context) error {
@@ -263,9 +285,10 @@ func (sel *AISessionSelector) Refresh(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	clog.V(common.DEBUG).Infof(ctx, "sessions added: %d", len(sessions))
+
 	var warmSessions []*BroadcastSession
 	var coldSessions []*BroadcastSession
+	var suspendedSessions []*BroadcastSession
 	for _, sess := range sessions {
 		// If the constraints are missing for this capability skip this session
 		constraints, ok := sess.OrchestratorInfo.Capabilities.Constraints[uint32(sel.cap)]
@@ -278,20 +301,29 @@ func (sel *AISessionSelector) Refresh(ctx context.Context) error {
 		if !ok {
 			continue
 		}
-
-		if modelConstraint.Warm {
-			warmSessions = append(warmSessions, sess)
+		if sel.suspender.Suspended(sess.Transcoder()) == 0 {
+			if modelConstraint.Warm {
+				warmSessions = append(warmSessions, sess)
+			} else {
+				coldSessions = append(coldSessions, sess)
+			}
 		} else {
-			coldSessions = append(coldSessions, sess)
+			suspendedSessions = append(suspendedSessions, sess)
 		}
 	}
 
 	sel.warmPool.Add(warmSessions)
 	sel.coldPool.Add(coldSessions)
-	clog.V(common.DEBUG).Infof(ctx, "warm sessions: %d", len(warmSessions))
-	clog.V(common.DEBUG).Infof(ctx, "cold sessions: %d", len(coldSessions))
+	clog.V(common.DEBUG).Infof(ctx, "sessions refreshed - warm sessions added: %d", len(warmSessions))
+	clog.V(common.DEBUG).Infof(ctx, "sessions refreshed - cold sessions added: %d", len(coldSessions))
 	sel.lastRefreshTime = time.Now()
-
+	//save initalPoolSize for determining session refresh
+	sel.initialPoolSize = sel.warmPool.Size() + sel.coldPool.Size()
+	for orch, _ := range sel.suspender.list {
+		if sel.suspender.Suspended(orch) > 0 {
+			sel.initialPoolSize += 1
+		}
+	}
 	return nil
 }
 
