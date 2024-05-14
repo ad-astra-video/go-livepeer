@@ -210,6 +210,122 @@ func getAvailableTranscodingOptionsHandler() http.Handler {
 	})
 }
 
+func (s *LivepeerServer) getNetworkCapabilitiesHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
+		caps := core.NewCapabilitiesWithConstraints(core.DefaultCapabilities(), nil, nil)
+
+		ods, err := s.LivepeerNode.OrchestratorPool.GetOrchestrators(context.Background(), 100, newSuspender(), caps, common.ScoreAtLeast(0))
+		if err != nil {
+			respond500(w, "failed to get orchestrator info: "+err.Error())
+		}
+
+		capModels := make(map[string]interface{})
+		remoteInfos := ods.GetRemoteInfos()
+		glog.V(common.SHORT).Infof("getting network capabilities for %d orchestrators", len(remoteInfos))
+		for idx, orch_info := range remoteInfos {
+			glog.V(common.DEBUG).Infof("getting capabilities for orchestrator %d", idx)
+			//parse the capabilities and capacities
+			if orch_info.GetCapabilities() != nil {
+				for cap, constraints := range orch_info.Capabilities.Constraints {
+					capName, err := core.CapabilityToName(core.Capability(int(cap)))
+					if err != nil {
+						continue
+					}
+
+					if _, ok := capModels[capName]; !ok {
+						capModels[capName] = make(map[string]interface{})
+					}
+
+					models := constraints.GetModels()
+					for model, constraint := range models {
+						networkCap := capModels[capName].(map[string]interface{})
+						if _, ok := networkCap[model]; !ok {
+							networkCap[model] = make(map[string]int)
+							modelData := networkCap[model].(map[string]int)
+							modelData["Warm"] = 0
+							modelData["Cold"] = 0
+						}
+						modelData := networkCap[model].(map[string]int)
+						if constraint.GetWarm() {
+							modelData["Warm"] += 1
+						} else {
+							modelData["Cold"] += 1
+						}
+					}
+				}
+			}
+
+		}
+
+		respondJson(w, capModels)
+
+	})
+}
+
+func (s *LivepeerServer) getAIPoolsHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		aiPoolInfoResp := make(map[string]interface{})
+
+		glog.V(common.DEBUG).Infof("getting AI pool info for %d selectors", len(s.AISessionManager.selectors))
+		s.AISessionManager.mu.Lock()
+		defer s.AISessionManager.mu.Unlock()
+		showDetail := r.Header.Get("Show-Detail")
+		for cap, pool := range s.AISessionManager.selectors {
+			capPools := make(map[string]interface{})
+			glog.Infof("getting AI pool info for %s", cap)
+
+			warmPoolInfo := make(map[string]interface{})
+			coldPoolInfo := make(map[string]interface{})
+			//get warmPool info
+			warmPoolInfo["Size"] = pool.warmPool.Size()
+			warmPoolInfo["InUse"] = len(pool.warmPool.inUseSess)
+			if showDetail != "" {
+				var warmOrchInfos []interface{}
+				for _, sess := range pool.warmPool.sessMap {
+					orchInfo := make(map[string]interface{})
+					orchInfo["Url"] = sess.Transcoder()
+					orchInfo["Latency"] = sess.LatencyScore
+					orchInfo["InFlight"] = len(sess.SegsInFlight)
+					warmOrchInfos = append(warmOrchInfos, orchInfo)
+				}
+				warmPoolInfo["Orchestrators"] = warmOrchInfos
+			}
+			capPools["Warm"] = warmPoolInfo
+
+			//get coldPool info
+			coldPoolInfo["Size"] = pool.coldPool.Size()
+			coldPoolInfo["InUse"] = len(pool.coldPool.inUseSess)
+			if showDetail != "" {
+				var coldOrchInfos []interface{}
+				for _, sess := range pool.coldPool.sessMap {
+					orchInfo := make(map[string]interface{})
+					orchInfo["Url"] = sess.Transcoder()
+					orchInfo["Latency"] = sess.LatencyScore
+					orchInfo["InFlight"] = len(sess.SegsInFlight)
+					coldOrchInfos = append(coldOrchInfos, orchInfo)
+				}
+				coldPoolInfo["Orchestrators"] = coldOrchInfos
+			}
+			capPools["Cold"] = coldPoolInfo
+			//get info on suspended orchestrators
+			suspendedInfo := make(map[string]interface{})
+			suspendedInfo["Count"] = len(pool.suspender.list)
+			suspendedInfo["CurrentRefresh"] = pool.suspender.count
+			if showDetail != "" {
+				suspendedInfo["Orchestrators"] = pool.suspender.list
+			}
+
+			capPools["Suspended"] = suspendedInfo
+
+			aiPoolInfoResp[cap] = capPools
+		}
+
+		glog.V(common.DEBUG).Infof("sending AI pool info for %d selectors", len(s.AISessionManager.selectors))
+		respondJson(w, aiPoolInfoResp)
+	})
+}
+
 // Rounds
 func currentRoundHandler(client eth.LivepeerEthClient) http.Handler {
 	return mustHaveClient(client, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
