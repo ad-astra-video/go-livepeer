@@ -99,6 +99,7 @@ type LivepeerConfig struct {
 	Region                  *string
 	MaxPricePerUnit         *string
 	MinPerfScore            *float64
+	NaiveSelection          *bool
 	MaxSessions             *string
 	CurrentManifest         *bool
 	Nvidia                  *string
@@ -175,6 +176,7 @@ func DefaultLivepeerConfig() LivepeerConfig {
 	defaultOrchPerfStatsURL := ""
 	defaultRegion := ""
 	defaultMinPerfScore := 0.0
+	defaultNaiveSelection := false
 	defaultCurrentManifest := false
 	defaultNvidia := ""
 	defaultNetint := ""
@@ -262,6 +264,7 @@ func DefaultLivepeerConfig() LivepeerConfig {
 		OrchPerfStatsURL:     &defaultOrchPerfStatsURL,
 		Region:               &defaultRegion,
 		MinPerfScore:         &defaultMinPerfScore,
+		NaiveSelection:       &defaultNaiveSelection,
 		CurrentManifest:      &defaultCurrentManifest,
 		Nvidia:               &defaultNvidia,
 		Netint:               &defaultNetint,
@@ -1086,6 +1089,8 @@ func StartLivepeer(ctx context.Context, cfg LivepeerConfig) {
 			go refreshOrchPerfScoreLoop(ctx, strings.ToUpper(*cfg.Region), *cfg.OrchPerfStatsURL, n.OrchPerfScore)
 		}
 
+		//setup preference of selection sessions using current performance data or no data
+		n.NaiveSelection = *cfg.NaiveSelection
 		// When the node is on-chain mode always cache the on-chain orchestrators and poll for updates
 		// Right now we rely on the DBOrchestratorPoolCache constructor to do this. Consider separating the logic
 		// caching/polling from the logic for fetching orchestrators during discovery

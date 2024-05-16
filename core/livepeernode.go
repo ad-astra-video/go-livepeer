@@ -78,6 +78,7 @@ type LivepeerNode struct {
 	SelectionAlgorithm common.SelectionAlgorithm
 	OrchestratorPool   common.OrchestratorPool
 	OrchPerfScore      *common.PerfScore
+	NaiveSelection     bool
 	OrchSecret         string
 	Transcoder         Transcoder
 	TranscoderManager  *RemoteTranscoderManager
@@ -234,7 +235,7 @@ func (n *LivepeerNode) GetCurrentCapacity() int {
 	return totalCapacity
 }
 
-func (n* LivepeerNode) GetTranscoderSecrets() error {
+func (n *LivepeerNode) GetTranscoderSecrets() error {
 	n.TranscoderManager.RTmutex.Lock()
 	defer n.TranscoderManager.RTmutex.Unlock()
 	secrets, err := n.Database.GetTranscoderSecrets()
@@ -251,7 +252,7 @@ func (n* LivepeerNode) GetTranscoderSecrets() error {
 	}
 }
 
-func (n* LivepeerNode) UpdateTranscoderSecret(secret string, active bool) {
+func (n *LivepeerNode) UpdateTranscoderSecret(secret string, active bool) {
 	n.TranscoderManager.RTmutex.Lock()
 	defer n.TranscoderManager.RTmutex.Unlock()
 	n.Database.UpdateTranscoderSecret(secret, active)
