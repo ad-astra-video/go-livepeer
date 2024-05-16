@@ -100,9 +100,10 @@ type Selector struct {
 	perfScore          *common.PerfScore
 	capabilities       common.CapabilityComparator
 	sortCompFunc       func(sess1, sess2 *BroadcastSession) bool
+	naiveSelection     bool
 }
 
-func NewSelector(stakeRdr stakeReader, selectionAlgorithm common.SelectionAlgorithm, perfScore *common.PerfScore, capabilities common.CapabilityComparator) *Selector {
+func NewSelector(stakeRdr stakeReader, selectionAlgorithm common.SelectionAlgorithm, perfScore *common.PerfScore, capabilities common.CapabilityComparator, naiveSelection bool) *Selector {
 	// By default, sort by initial latency
 	sortCompFunc := func(sess1, sess2 *BroadcastSession) bool {
 		return sess1.InitialLatency < sess2.InitialLatency
@@ -116,7 +117,7 @@ func NewSelector(stakeRdr stakeReader, selectionAlgorithm common.SelectionAlgori
 	}
 }
 
-func NewSelectorOrderByLatencyScore(stakeRdr stakeReader, selectionAlgorithm common.SelectionAlgorithm, perfScore *common.PerfScore, capabilities common.CapabilityComparator) *Selector {
+func NewSelectorOrderByLatencyScore(stakeRdr stakeReader, selectionAlgorithm common.SelectionAlgorithm, perfScore *common.PerfScore, capabilities common.CapabilityComparator, naiveSelection bool) *Selector {
 	sortCompFunc := func(sess1, sess2 *BroadcastSession) bool {
 		return sess1.LatencyScore < sess2.LatencyScore
 	}
@@ -191,7 +192,7 @@ type MinLSSelector struct {
 }
 
 // NewMinLSSelector returns an instance of MinLSSelector configured with a good enough latency score
-func NewMinLSSelector(stakeRdr stakeReader, minLS float64, selectionAlgorithm common.SelectionAlgorithm, perfScore *common.PerfScore, capabilities common.CapabilityComparator) *MinLSSelector {
+func NewMinLSSelector(stakeRdr stakeReader, minLS float64, selectionAlgorithm common.SelectionAlgorithm, perfScore *common.PerfScore, capabilities common.CapabilityComparator, naiveSelection bool) *MinLSSelector {
 	knownSessions := &sessHeap{}
 	heap.Init(knownSessions)
 
@@ -203,6 +204,7 @@ func NewMinLSSelector(stakeRdr stakeReader, minLS float64, selectionAlgorithm co
 			selectionAlgorithm: selectionAlgorithm,
 			perfScore:          perfScore,
 			capabilities:       capabilities,
+			naiveSelection:     naiveSelection,
 		},
 	}
 }
@@ -219,7 +221,11 @@ func (s *MinLSSelector) Remove(sess *BroadcastSession) {
 
 // Complete adds the session to the selector's list sessions with a latency score
 func (s *MinLSSelector) Complete(sess *BroadcastSession) {
-	heap.Push(s.knownSessions, sess)
+	if !s.naiveSelection {
+		heap.Push(s.knownSessions, sess)
+	} else {
+		s.sessions = append(s.sessions, sess)
+	}
 }
 
 // Select returns the session with the lowest latency score if it is good enough.
