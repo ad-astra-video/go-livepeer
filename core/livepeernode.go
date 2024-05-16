@@ -128,6 +128,7 @@ type LivepeerNode struct {
 	SelectionAlgorithm common.SelectionAlgorithm
 	OrchestratorPool   common.OrchestratorPool
 	OrchPerfScore      *common.PerfScore
+	NaiveSelection     bool
 	OrchSecret         string
 	Transcoder         Transcoder
 	TranscoderManager  *RemoteTranscoderManager
