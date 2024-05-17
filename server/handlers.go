@@ -294,6 +294,7 @@ func (s *LivepeerServer) getOrchestratorInfoHandler() http.Handler {
 					}
 					//parse the capabilities and capacities
 					if orch_info.GetCapabilities() != nil {
+						orch_info_resp["Version"] = orch_info.Capabilities.Version
 						capNameAndCapacity := make(map[string]int)
 						for capb, capc := range orch_info.Capabilities.Capacities {
 							capName, err := core.CapabilityToName(core.Capability(int(capb)))
@@ -301,6 +302,7 @@ func (s *LivepeerServer) getOrchestratorInfoHandler() http.Handler {
 								capNameAndCapacity[capName] = int(capc)
 							}
 						}
+
 						orch_info_resp["Capabilities"] = capNameAndCapacity
 					}
 
