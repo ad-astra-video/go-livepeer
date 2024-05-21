@@ -42,8 +42,19 @@ type aiRequestParams struct {
 	sessManager *AISessionManager
 }
 
-func processTextToImage(ctx context.Context, params aiRequestParams, req worker.TextToImageJSONRequestBody) (*worker.ImageResponse, error) {
-	resp, err := processAIRequest(ctx, params, req)
+type reqOrchestrator struct {
+	Address          string `json:"address"`
+	Url              string `json:"url"`
+	RecipientAddress string `json:"recipient_address"`
+}
+
+type aiReqResp struct {
+	Images       interface{}      `json:"images"`
+	Orchestrator *reqOrchestrator `json:"orchestrator"`
+}
+
+func processTextToImage(ctx context.Context, params aiRequestParams, req worker.TextToImageJSONRequestBody) (*aiReqResp, error) {
+	resp, orch, err := processAIRequest(ctx, params, req)
 	if err != nil {
 		return nil, err
 	}
@@ -68,7 +79,7 @@ func processTextToImage(ctx context.Context, params aiRequestParams, req worker.
 
 	resp.Images = newMedia
 
-	return resp, nil
+	return &aiReqResp{Images: resp.Images, Orchestrator: orch}, nil
 }
 
 func submitTextToImage(ctx context.Context, params aiRequestParams, sess *AISession, req worker.TextToImageJSONRequestBody) (*worker.ImageResponse, error) {
@@ -120,8 +131,8 @@ func submitTextToImage(ctx context.Context, params aiRequestParams, sess *AISess
 	return resp.JSON200, nil
 }
 
-func processImageToImage(ctx context.Context, params aiRequestParams, req worker.ImageToImageMultipartRequestBody) (*worker.ImageResponse, error) {
-	resp, err := processAIRequest(ctx, params, req)
+func processImageToImage(ctx context.Context, params aiRequestParams, req worker.ImageToImageMultipartRequestBody) (*aiReqResp, error) {
+	resp, orch, err := processAIRequest(ctx, params, req)
 	if err != nil {
 		return nil, err
 	}
@@ -146,7 +157,7 @@ func processImageToImage(ctx context.Context, params aiRequestParams, req worker
 
 	resp.Images = newMedia
 
-	return resp, nil
+	return &aiReqResp{Images: resp.Images, Orchestrator: orch}, nil
 }
 
 func submitImageToImage(ctx context.Context, params aiRequestParams, sess *AISession, req worker.ImageToImageMultipartRequestBody) (*worker.ImageResponse, error) {
@@ -200,8 +211,8 @@ func submitImageToImage(ctx context.Context, params aiRequestParams, sess *AISes
 	return resp.JSON200, nil
 }
 
-func processImageToVideo(ctx context.Context, params aiRequestParams, req worker.ImageToVideoMultipartRequestBody) (*worker.ImageResponse, error) {
-	resp, err := processAIRequest(ctx, params, req)
+func processImageToVideo(ctx context.Context, params aiRequestParams, req worker.ImageToVideoMultipartRequestBody) (*aiReqResp, error) {
+	resp, orch, err := processAIRequest(ctx, params, req)
 	if err != nil {
 		return nil, err
 	}
@@ -230,7 +241,7 @@ func processImageToVideo(ctx context.Context, params aiRequestParams, req worker
 
 	resp.Images = videos
 
-	return resp, nil
+	return &aiReqResp{Images: resp.Images, Orchestrator: orch}, nil
 }
 
 func submitImageToVideo(ctx context.Context, params aiRequestParams, sess *AISession, req worker.ImageToVideoMultipartRequestBody) (*worker.ImageResponse, error) {
@@ -295,7 +306,7 @@ func submitImageToVideo(ctx context.Context, params aiRequestParams, sess *AISes
 	return &res, nil
 }
 
-func processAIRequest(ctx context.Context, params aiRequestParams, req interface{}) (*worker.ImageResponse, error) {
+func processAIRequest(ctx context.Context, params aiRequestParams, req interface{}) (*worker.ImageResponse, *reqOrchestrator, error) {
 	var cap core.Capability
 	var modelID string
 	var submitFn func(context.Context, aiRequestParams, *AISession) (*worker.ImageResponse, error)
@@ -328,11 +339,13 @@ func processAIRequest(ctx context.Context, params aiRequestParams, req interface
 		submitFn = func(ctx context.Context, params aiRequestParams, sess *AISession) (*worker.ImageResponse, error) {
 			return submitImageToVideo(ctx, params, sess, v)
 		}
+
 	default:
-		return nil, errors.New("unknown AI request type")
+		return nil, nil, errors.New("unknown AI request type")
 	}
 
 	var resp *worker.ImageResponse
+	reqOrch := reqOrchestrator{}
 
 	cctx, cancel := context.WithTimeout(ctx, processingRetryTimeout)
 	defer cancel()
@@ -341,7 +354,7 @@ func processAIRequest(ctx context.Context, params aiRequestParams, req interface
 	for {
 		select {
 		case <-cctx.Done():
-			return nil, &ServiceUnavailableError{err: fmt.Errorf("no orchestrators available within %v timeout", processingRetryTimeout)}
+			return nil, nil, &ServiceUnavailableError{err: fmt.Errorf("no orchestrators available within %v timeout", processingRetryTimeout)}
 		default:
 		}
 
@@ -356,6 +369,10 @@ func processAIRequest(ctx context.Context, params aiRequestParams, req interface
 			break
 		}
 
+		reqOrch.Url = sess.Transcoder()
+		reqOrch.Address = sess.Address()
+		reqOrch.RecipientAddress = sess.RecipientAddress()
+
 		resp, err = submitFn(ctx, params, sess)
 		if err == nil {
 			params.sessManager.Complete(ctx, sess)
@@ -368,10 +385,10 @@ func processAIRequest(ctx context.Context, params aiRequestParams, req interface
 	}
 
 	if resp == nil {
-		return nil, &ServiceUnavailableError{err: errors.New("no orchestrators available")}
+		return nil, nil, &ServiceUnavailableError{err: errors.New("no orchestrators available")}
 	}
 
-	return resp, nil
+	return resp, &reqOrch, nil
 }
 
 func prepareAIPayment(ctx context.Context, sess *AISession, outPixels int64) (worker.RequestEditorFn, *BalanceUpdate, error) {
