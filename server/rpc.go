@@ -139,6 +139,16 @@ func (bs *BroadcastSession) Address() string {
 	return hexutil.Encode(bs.OrchestratorInfo.Address)
 }
 
+func (bs *BroadcastSession) RecipientAddress() string {
+	bs.lock.RLock()
+	defer bs.lock.RUnlock()
+	if bs.OrchestratorInfo.TicketParams != nil {
+		return hexutil.Encode(bs.OrchestratorInfo.TicketParams.Recipient)
+	} else {
+		return ""
+	}
+}
+
 func (bs *BroadcastSession) Clone() *BroadcastSession {
 	bs.lock.RLock()
 	newSess := *bs
