@@ -33,7 +33,11 @@ type orchestratorPool struct {
 	orchBlacklist []string
 }
 
-func NewOrchestratorPool(bcast common.Broadcaster, uris []*url.URL, score float32, orchBlacklist []string) *orchestratorPool {
+func NewOrchestratorPool(bcast common.Broadcaster, uris []*url.URL, score float32, orchBlacklist []string, initialDiscoveryTimeout int) *orchestratorPool {
+	if initialDiscoveryTimeout > 0 {
+		getOrchestratorsCutoffTimeout = time.Duration(initialDiscoveryTimeout) * time.Millisecond
+	}
+
 	if len(uris) <= 0 {
 		// Should we return here?
 		glog.Error("Orchestrator pool does not have any URIs")
@@ -47,8 +51,7 @@ func NewOrchestratorPool(bcast common.Broadcaster, uris []*url.URL, score float3
 
 func NewOrchestratorPoolWithPred(bcast common.Broadcaster, addresses []*url.URL,
 	pred func(*net.OrchestratorInfo) bool, score float32, orchBlacklist []string) *orchestratorPool {
-
-	pool := NewOrchestratorPool(bcast, addresses, score, orchBlacklist)
+	pool := NewOrchestratorPool(bcast, addresses, score, orchBlacklist, 0) //last parameter is timeout which is set at node launch
 	pool.pred = pred
 	return pool
 }
@@ -60,6 +63,7 @@ func (o *orchestratorPool) GetInfos() []common.OrchestratorLocalInfo {
 func (o *orchestratorPool) GetOrchestrators(ctx context.Context, numOrchestrators int, suspender common.Suspender, caps common.CapabilityComparator,
 	scorePred common.ScorePred) (common.OrchestratorDescriptors, error) {
 
+	clog.V(common.DEBUG).Infof(ctx, "getting orchestrator info for %d orchestrators", numOrchestrators)
 	linfos := make([]*common.OrchestratorLocalInfo, 0, len(o.infos))
 	for i, _ := range o.infos {
 		if scorePred(o.infos[i].Score) {
@@ -137,6 +141,8 @@ func (o *orchestratorPool) GetOrchestrators(ctx context.Context, numOrchestrator
 
 	// try to wait for orchestrators until at least 1 is found (with the exponential backoff timout)
 	timeout := getOrchestratorsCutoffTimeout
+	clog.V(common.DEBUG).Infof(ctx, "timeout to get orchestrators: %dms", getOrchestratorsCutoffTimeout.Milliseconds())
+
 	timer := time.NewTimer(timeout)
 
 	for nbResp < numAvailableOrchs && len(ods) < numOrchestrators && !timedOut {

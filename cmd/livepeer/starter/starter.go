@@ -105,6 +105,7 @@ type LivepeerConfig struct {
 	Region                      *string
 	MaxPricePerUnit             *int
 	MinPerfScore                *float64
+	InitialDiscoveryTimeout     *int
 	MaxSessions                 *string
 	CurrentManifest             *bool
 	Nvidia                      *string
@@ -182,6 +183,7 @@ func DefaultLivepeerConfig() LivepeerConfig {
 	defaultOrchPerfStatsURL := ""
 	defaultRegion := ""
 	defaultMinPerfScore := 0.0
+	defaultInitialDiscoveryTimeout := 500
 	defaultCurrentManifest := false
 	defaultNvidia := ""
 	defaultNetint := ""
@@ -260,25 +262,26 @@ func DefaultLivepeerConfig() LivepeerConfig {
 		VerifierPath: &defaultVerifierPath,
 
 		// Transcoding:
-		Orchestrator:         &defaultOrchestrator,
-		Transcoder:           &defaultTranscoder,
-		Gateway:              &defaultGateway,
-		Broadcaster:          &defaultBroadcaster,
-		OrchSecret:           &defaultOrchSecret,
-		TranscodingOptions:   &defaultTranscodingOptions,
-		MaxAttempts:          &defaultMaxAttempts,
-		SelectRandWeight:     &defaultSelectRandWeight,
-		SelectStakeWeight:    &defaultSelectStakeWeight,
-		SelectPriceWeight:    &defaultSelectPriceWeight,
-		SelectPriceExpFactor: &defaultSelectPriceExpFactor,
-		MaxSessions:          &defaultMaxSessions,
-		OrchPerfStatsURL:     &defaultOrchPerfStatsURL,
-		Region:               &defaultRegion,
-		MinPerfScore:         &defaultMinPerfScore,
-		CurrentManifest:      &defaultCurrentManifest,
-		Nvidia:               &defaultNvidia,
-		Netint:               &defaultNetint,
-		TestTranscoder:       &defaultTestTranscoder,
+		Orchestrator:            &defaultOrchestrator,
+		Transcoder:              &defaultTranscoder,
+		Gateway:                 &defaultGateway,
+		Broadcaster:             &defaultBroadcaster,
+		OrchSecret:              &defaultOrchSecret,
+		TranscodingOptions:      &defaultTranscodingOptions,
+		MaxAttempts:             &defaultMaxAttempts,
+		SelectRandWeight:        &defaultSelectRandWeight,
+		SelectStakeWeight:       &defaultSelectStakeWeight,
+		SelectPriceWeight:       &defaultSelectPriceWeight,
+		SelectPriceExpFactor:    &defaultSelectPriceExpFactor,
+		MaxSessions:             &defaultMaxSessions,
+		OrchPerfStatsURL:        &defaultOrchPerfStatsURL,
+		Region:                  &defaultRegion,
+		MinPerfScore:            &defaultMinPerfScore,
+		InitialDiscoveryTimeout: &defaultInitialDiscoveryTimeout,
+		CurrentManifest:         &defaultCurrentManifest,
+		Nvidia:                  &defaultNvidia,
+		Netint:                  &defaultNetint,
+		TestTranscoder:          &defaultTestTranscoder,
 
 		// AI:
 		AIWorker:                    &defaultAIWorker,
@@ -1184,7 +1187,7 @@ func StartLivepeer(ctx context.Context, cfg LivepeerConfig) {
 		if *cfg.Network != "offchain" {
 			ctx, cancel := context.WithCancel(ctx)
 			defer cancel()
-			dbOrchPoolCache, err := discovery.NewDBOrchestratorPoolCache(ctx, n, timeWatcher, orchBlacklist)
+			dbOrchPoolCache, err := discovery.NewDBOrchestratorPoolCache(ctx, n, timeWatcher, orchBlacklist, *cfg.InitialDiscoveryTimeout)
 			if err != nil {
 				exit("Could not create orchestrator pool with DB cache: %v", err)
 			}
@@ -1201,7 +1204,7 @@ func StartLivepeer(ctx context.Context, cfg LivepeerConfig) {
 			glog.Info("Using orchestrator webhook URL ", whurl)
 			n.OrchestratorPool = discovery.NewWebhookPool(bcast, whurl)
 		} else if len(orchURLs) > 0 {
-			n.OrchestratorPool = discovery.NewOrchestratorPool(bcast, orchURLs, common.Score_Trusted, orchBlacklist)
+			n.OrchestratorPool = discovery.NewOrchestratorPool(bcast, orchURLs, common.Score_Trusted, orchBlacklist, *cfg.InitialDiscoveryTimeout)
 		}
 
 		if n.OrchestratorPool == nil {
