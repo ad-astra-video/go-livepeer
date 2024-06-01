@@ -523,6 +523,20 @@ func (cap *Capabilities) RemoveCapacity(goneCaps *Capabilities) {
 	}
 }
 
+func (c *CapabilityConstraints) AddConstraints(cap Capability, constraint *Constraints) {
+	if constraint == nil {
+		return
+	}
+	constraints := make(map[Capability]*Constraints)
+	constraints = *c
+
+	for model_id, modelConstraint := range constraint.Models {
+		constraints[cap].Models[model_id] = modelConstraint
+	}
+
+	c = (*CapabilityConstraints)(&constraints)
+}
+
 func (capStr *CapabilityString) removeCapability(capability Capability) {
 	arrIdx := int(capability) / 64 // floors automatically
 	bitIdx := int(capability) % 64
