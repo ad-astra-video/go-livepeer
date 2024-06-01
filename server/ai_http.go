@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"image"
+	"io"
 	"net/http"
 	"strconv"
 	"time"
@@ -44,6 +45,7 @@ func startAIServer(lp lphttp) error {
 	lp.transRPC.Handle("/image-to-video", oapiReqValidator(lp.ImageToVideo()))
 	lp.transRPC.Handle("/upscale", oapiReqValidator(lp.Upscale()))
 	lp.transRPC.Handle("/audio-to-text", oapiReqValidator(lp.AudioToText()))
+	lp.transRPC.Handle("/register-ai-worker", lp.RegisterAIWorker())
 
 	return nil
 }
@@ -154,6 +156,34 @@ func (h *lphttp) AudioToText() http.Handler {
 		}
 
 		handleAIRequest(ctx, w, r, orch, req)
+	})
+}
+
+func (h *lphttp) RegisterAIWorker() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
+		remoteAddr := getRemoteAddr(r)
+
+		ctx := clog.AddVal(r.Context(), clog.ClientIP, remoteAddr)
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			respond400(w, "content must be aiModels json")
+		}
+		modelsString := string(body)
+		configs, err := core.ParseAIModelConfigs(modelsString)
+		if err != nil {
+			respond400(w, fmt.Sprintf("Error parsing -aiModels: %v", err))
+			return
+		}
+
+		newCaps, newConstraints, err := h.node.AddAIConfigs(ctx, configs)
+
+		h.node.AddAICapabilities(ctx, newCaps, newConstraints)
+
+		if err != nil {
+			respond500(w, fmt.Sprintf("Error adding workers: %v", err))
+		}
+
 	})
 }
 
