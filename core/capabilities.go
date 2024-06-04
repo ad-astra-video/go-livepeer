@@ -14,7 +14,8 @@ import (
 type ModelConstraints map[string]*ModelConstraint
 
 type ModelConstraint struct {
-	Warm bool
+	Warm     bool
+	Capacity uint32
 }
 
 type Capability int
@@ -527,14 +528,32 @@ func (c *CapabilityConstraints) AddConstraints(cap Capability, constraint *Const
 	if constraint == nil {
 		return
 	}
-	constraints := make(map[Capability]*Constraints)
-	constraints = *c
 
+	//the capability should be added by AddCapacity
 	for model_id, modelConstraint := range constraint.Models {
-		constraints[cap].Models[model_id] = modelConstraint
+		if _, ok := (*c)[cap].Models[model_id]; ok {
+			if (*c)[cap].Models[model_id].Warm == modelConstraint.Warm {
+				(*c)[cap].Models[model_id].Capacity += 1
+			} else {
+				(*c)[cap].Models[model_id] = modelConstraint
+				(*c)[cap].Models[model_id].Capacity = 1
+			}
+		} else {
+			(*c)[cap].Models[model_id] = modelConstraint
+		}
+	}
+}
+
+func (c *CapabilityConstraints) RemoveConstraints(cap Capability, constraint *Constraints) {
+	if constraint == nil {
+		return
 	}
 
-	c = (*CapabilityConstraints)(&constraints)
+	for model_id, modelConstraint := range constraint.Models {
+		if (*c)[cap].Models[model_id].Warm == modelConstraint.Warm {
+			(*c)[cap].Models[model_id].Capacity -= 1
+		}
+	}
 }
 
 func (capStr *CapabilityString) removeCapability(capability Capability) {

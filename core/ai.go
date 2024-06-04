@@ -95,14 +95,14 @@ func (n *LivepeerNode) AddAIConfigs(ctx context.Context, configs []AIModelConfig
 	var aiCaps []Capability
 	constraints := make(map[Capability]*Constraints)
 	for _, config := range configs {
-		modelConstraint := &ModelConstraint{Warm: config.Warm}
+		modelConstraint := &ModelConstraint{Warm: config.Warm, Capacity: 1}
 
 		// If the config contains a URL we call Warm() anyway because AIWorker will just register
 		// the endpoint for an external container
 		if config.Warm || config.URL != "" {
 			endpoint := worker.RunnerEndpoint{URL: config.URL, Token: config.Token}
 			if err := n.AIWorker.Warm(ctx, config.Pipeline, config.ModelID, endpoint, config.OptimizationFlags); err != nil {
-				return nil, nil, errors.New(fmt.Sprintf("Error AI worker warming %v container: %v", config.Pipeline, err))
+				return nil, nil, fmt.Errorf("Error AI worker warming %v container: %v", config.Pipeline, err)
 			}
 		}
 
@@ -121,7 +121,15 @@ func (n *LivepeerNode) AddAIConfigs(ctx context.Context, configs []AIModelConfig
 				}
 			}
 
-			constraints[Capability_TextToImage].Models[config.ModelID] = modelConstraint
+			if _, ok := constraints[Capability_TextToImage].Models[config.ModelID]; ok {
+				if constraints[Capability_TextToImage].Models[config.ModelID].Warm == modelConstraint.Warm {
+					constraints[Capability_TextToImage].Models[config.ModelID].Capacity += 1
+				} else {
+					constraints[Capability_TextToImage].Models[config.ModelID] = modelConstraint
+				}
+			} else {
+				constraints[Capability_TextToImage].Models[config.ModelID] = &ModelConstraint{Warm: modelConstraint.Warm, Capacity: 1}
+			}
 
 			n.SetBasePriceForCap("default", Capability_TextToImage, config.ModelID, big.NewRat(config.PricePerUnit, config.PixelsPerUnit))
 		case "image-to-image":
@@ -133,7 +141,15 @@ func (n *LivepeerNode) AddAIConfigs(ctx context.Context, configs []AIModelConfig
 				}
 			}
 
-			constraints[Capability_ImageToImage].Models[config.ModelID] = modelConstraint
+			if _, ok := constraints[Capability_ImageToImage].Models[config.ModelID]; ok {
+				if constraints[Capability_ImageToImage].Models[config.ModelID].Warm == modelConstraint.Warm {
+					constraints[Capability_ImageToImage].Models[config.ModelID].Capacity += 1
+				} else {
+					constraints[Capability_ImageToImage].Models[config.ModelID] = modelConstraint
+				}
+			} else {
+				constraints[Capability_ImageToImage].Models[config.ModelID] = modelConstraint
+			}
 
 			n.SetBasePriceForCap("default", Capability_ImageToImage, config.ModelID, big.NewRat(config.PricePerUnit, config.PixelsPerUnit))
 		case "image-to-video":
@@ -145,7 +161,16 @@ func (n *LivepeerNode) AddAIConfigs(ctx context.Context, configs []AIModelConfig
 				}
 			}
 
-			constraints[Capability_ImageToVideo].Models[config.ModelID] = modelConstraint
+			if _, ok := constraints[Capability_ImageToVideo].Models[config.ModelID]; ok {
+				if constraints[Capability_ImageToVideo].Models[config.ModelID].Warm == modelConstraint.Warm {
+					constraints[Capability_ImageToVideo].Models[config.ModelID].Capacity += 1
+				} else {
+					constraints[Capability_ImageToVideo].Models[config.ModelID] = modelConstraint
+				}
+
+			} else {
+				constraints[Capability_ImageToVideo].Models[config.ModelID] = modelConstraint
+			}
 
 			n.SetBasePriceForCap("default", Capability_ImageToVideo, config.ModelID, big.NewRat(config.PricePerUnit, config.PixelsPerUnit))
 		}
@@ -153,7 +178,7 @@ func (n *LivepeerNode) AddAIConfigs(ctx context.Context, configs []AIModelConfig
 		if len(aiCaps) > 0 {
 			capability := aiCaps[len(aiCaps)-1]
 			price := n.GetBasePriceForCap("default", capability, config.ModelID)
-			glog.V(6).Infof("Capability %s (ID: %v) advertised with model constraint %s at price %d per %d unit", config.Pipeline, capability, config.ModelID, price.Num(), price.Denom())
+			glog.V(6).Infof("Capability %s (ID: %v) advertised with model constraint %s at price %d per %d unit (%+v)", config.Pipeline, capability, config.ModelID, price.Num(), price.Denom(), modelConstraint)
 		}
 	}
 
