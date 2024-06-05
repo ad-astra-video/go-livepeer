@@ -422,7 +422,8 @@ func (c *Capabilities) ToNetCapabilities() *net.Capabilities {
 		models := make(map[string]*net.Capabilities_Constraints_ModelConstraint)
 		for modelID, modelConstraint := range constraints.Models {
 			models[modelID] = &net.Capabilities_Constraints_ModelConstraint{
-				Warm: modelConstraint.Warm,
+				Warm:     modelConstraint.Warm,
+				Capacity: modelConstraint.Capacity,
 			}
 		}
 
