@@ -113,6 +113,12 @@ func (h *lphttp) ImageToVideo() http.Handler {
 func (h *lphttp) RegisterAIWorker() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 
+		creds := r.Header.Get("Credentials")
+		if creds != h.node.OrchSecret {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
 		remoteAddr := getRemoteAddr(r)
 
 		ctx := clog.AddVal(r.Context(), clog.ClientIP, remoteAddr)
@@ -134,6 +140,8 @@ func (h *lphttp) RegisterAIWorker() http.Handler {
 		if err != nil {
 			respond500(w, fmt.Sprintf("Error adding workers: %v", err))
 		}
+
+		respondOk(w, []byte("OK"))
 
 	})
 }
