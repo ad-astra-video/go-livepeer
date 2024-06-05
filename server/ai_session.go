@@ -294,11 +294,14 @@ func (sel *AISessionSelector) Refresh(ctx context.Context) error {
 			continue
 		}
 
-		if modelConstraint.Warm {
-			warmSessions = append(warmSessions, sess)
-		} else {
-			coldSessions = append(coldSessions, sess)
+		if modelConstraint.Capacity > 0 {
+			if modelConstraint.Warm {
+				warmSessions = append(warmSessions, sess)
+			} else {
+				coldSessions = append(coldSessions, sess)
+			}
 		}
+
 	}
 
 	sel.warmPool.Add(warmSessions)
