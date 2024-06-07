@@ -21,6 +21,7 @@ type AI interface {
 	Warm(context.Context, string, string, worker.RunnerEndpoint, worker.OptimizationFlags) error
 	Stop(context.Context) error
 	HasCapacity(pipeline, modelID string) bool
+	IsRegistered(url, pipeline, modelID string) bool
 }
 
 type AIModelConfig struct {
@@ -32,6 +33,25 @@ type AIModelConfig struct {
 	PricePerUnit      int64                    `json:"price_per_unit,omitempty"`
 	PixelsPerUnit     int64                    `json:"pixels_per_unit,omitempty"`
 	OptimizationFlags worker.OptimizationFlags `json:"optimization_flags,omitempty"`
+}
+
+func PipelineToCapability(pipeline string) Capability {
+	switch pipeline {
+	case "text-to-image":
+		return Capability_TextToImage
+	case "image-to-image":
+		return Capability_ImageToImage
+	case "image-to-video":
+		return Capability_ImageToVideo
+	case "upscale":
+		return Capability_Unused
+	case "frame-interpolation":
+		return Capability_Unused
+	case "speech-to-text":
+		return Capability_Unused
+	default:
+		return Capability_Unused
+	}
 }
 
 func (config *AIModelConfig) UnmarshalJSON(data []byte) error {
@@ -100,68 +120,37 @@ func (n *LivepeerNode) AddAIConfigs(ctx context.Context, configs []AIModelConfig
 			glog.Warningf("Model %v has 'optimization_flags' set without 'warm'. Optimization flags are currently only used for warm containers.", config.ModelID)
 		}
 
-		switch config.Pipeline {
-		case "text-to-image":
-			_, ok := constraints[Capability_TextToImage]
-			if !ok {
-				aiCaps = append(aiCaps, Capability_TextToImage)
-				constraints[Capability_TextToImage] = &Constraints{
-					Models: make(map[string]*ModelConstraint),
-				}
-			}
+		pipelineCap := PipelineToCapability(config.Pipeline)
 
-			if _, ok := constraints[Capability_TextToImage].Models[config.ModelID]; ok {
-				if constraints[Capability_TextToImage].Models[config.ModelID].Warm == modelConstraint.Warm {
-					constraints[Capability_TextToImage].Models[config.ModelID].Capacity += 1
-				} else {
-					constraints[Capability_TextToImage].Models[config.ModelID] = modelConstraint
+		if pipelineCap > Capability_Unused {
+			if config.URL != "" && n.AIWorker.IsRegistered(config.URL, config.Pipeline, config.ModelID) {
+				configPrice := big.NewRat(config.PricePerUnit, config.PixelsPerUnit)
+				currPrice := n.GetBasePriceForCap("default", pipelineCap, config.ModelID)
+				if configPrice.Cmp(currPrice) != 0 {
+					n.SetBasePriceForCap("default", pipelineCap, config.ModelID, configPrice)
+					glog.V(6).Infof("Capability %s (ID: %v) advertised with model constraint %s price updated to %d per %d unit", config.Pipeline, pipelineCap, config.ModelID, configPrice.Num(), configPrice.Denom())
 				}
 			} else {
-				constraints[Capability_TextToImage].Models[config.ModelID] = &ModelConstraint{Warm: modelConstraint.Warm, Capacity: 1}
-			}
-
-			n.SetBasePriceForCap("default", Capability_TextToImage, config.ModelID, big.NewRat(config.PricePerUnit, config.PixelsPerUnit))
-		case "image-to-image":
-			_, ok := constraints[Capability_ImageToImage]
-			if !ok {
-				aiCaps = append(aiCaps, Capability_ImageToImage)
-				constraints[Capability_ImageToImage] = &Constraints{
-					Models: make(map[string]*ModelConstraint),
+				_, ok := constraints[pipelineCap]
+				if !ok {
+					aiCaps = append(aiCaps, pipelineCap)
+					constraints[pipelineCap] = &Constraints{
+						Models: make(map[string]*ModelConstraint),
+					}
 				}
-			}
 
-			if _, ok := constraints[Capability_ImageToImage].Models[config.ModelID]; ok {
-				if constraints[Capability_ImageToImage].Models[config.ModelID].Warm == modelConstraint.Warm {
-					constraints[Capability_ImageToImage].Models[config.ModelID].Capacity += 1
+				if _, ok := constraints[pipelineCap].Models[config.ModelID]; ok {
+					if constraints[pipelineCap].Models[config.ModelID].Warm == modelConstraint.Warm {
+						constraints[pipelineCap].Models[config.ModelID].Capacity += 1
+					} else {
+						constraints[pipelineCap].Models[config.ModelID] = modelConstraint
+					}
 				} else {
-					constraints[Capability_ImageToImage].Models[config.ModelID] = modelConstraint
-				}
-			} else {
-				constraints[Capability_ImageToImage].Models[config.ModelID] = modelConstraint
-			}
-
-			n.SetBasePriceForCap("default", Capability_ImageToImage, config.ModelID, big.NewRat(config.PricePerUnit, config.PixelsPerUnit))
-		case "image-to-video":
-			_, ok := constraints[Capability_ImageToVideo]
-			if !ok {
-				aiCaps = append(aiCaps, Capability_ImageToVideo)
-				constraints[Capability_ImageToVideo] = &Constraints{
-					Models: make(map[string]*ModelConstraint),
-				}
-			}
-
-			if _, ok := constraints[Capability_ImageToVideo].Models[config.ModelID]; ok {
-				if constraints[Capability_ImageToVideo].Models[config.ModelID].Warm == modelConstraint.Warm {
-					constraints[Capability_ImageToVideo].Models[config.ModelID].Capacity += 1
-				} else {
-					constraints[Capability_ImageToVideo].Models[config.ModelID] = modelConstraint
+					constraints[pipelineCap].Models[config.ModelID] = modelConstraint
 				}
 
-			} else {
-				constraints[Capability_ImageToVideo].Models[config.ModelID] = modelConstraint
+				n.SetBasePriceForCap("default", pipelineCap, config.ModelID, big.NewRat(config.PricePerUnit, config.PixelsPerUnit))
 			}
-
-			n.SetBasePriceForCap("default", Capability_ImageToVideo, config.ModelID, big.NewRat(config.PricePerUnit, config.PixelsPerUnit))
 		}
 
 		if len(aiCaps) > 0 {
