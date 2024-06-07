@@ -559,8 +559,8 @@ func StartLivepeer(ctx context.Context, cfg LivepeerConfig) {
 			}
 
 		} else {
-			glog.Error("The '-aiModels' flag was set, but no model configuration was provided. Please specify the model configuration using the '-aiModels' flag.")
-			return
+			glog.Error("The '-aiWorker' flag was set, but no model configuration was provided. Please specify the model configuration using the '-aiModels' flag or connect remote workers.")
+			//return
 		}
 
 		defer func() {
