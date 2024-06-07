@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/getkin/kin-openapi/openapi3filter"
+	"github.com/golang/glog"
 	"github.com/livepeer/ai-worker/worker"
 	"github.com/livepeer/go-livepeer/clog"
 	"github.com/livepeer/go-livepeer/common"
@@ -161,14 +162,14 @@ func (h *lphttp) AudioToText() http.Handler {
 
 func (h *lphttp) RegisterAIWorker() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		remoteAddr := getRemoteAddr(r)
+		glog.Infof("register worker request received from %v", remoteAddr)
 
 		creds := r.Header.Get("Credentials")
 		if creds != h.node.OrchSecret {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
-
-		remoteAddr := getRemoteAddr(r)
 
 		ctx := clog.AddVal(r.Context(), clog.ClientIP, remoteAddr)
 		body, err := io.ReadAll(r.Body)
@@ -184,13 +185,16 @@ func (h *lphttp) RegisterAIWorker() http.Handler {
 
 		newCaps, newConstraints, err := h.node.AddAIConfigs(ctx, configs)
 
-		h.node.AddAICapabilities(ctx, newCaps, newConstraints)
+		if len(newCaps) > 0 {
+			h.node.AddAICapabilities(ctx, newCaps, newConstraints)
+			glog.Infof("capabilities added from registered worker %v", remoteAddr)
+		}
 
 		if err != nil {
 			respond500(w, fmt.Sprintf("Error adding workers: %v", err))
 		}
 
-		respondOk(w, []byte("OK"))
+		respondOk(w, []byte("WORKER ADDED"))
 
 	})
 }
