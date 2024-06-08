@@ -124,21 +124,6 @@ func (n *LivepeerNode) AddAIConfigs(ctx context.Context, configs []AIModelConfig
 	constraints := make(map[Capability]*Constraints)
 	for _, config := range configs {
 		modelConstraint := &ModelConstraint{Warm: config.Warm, Capacity: 1}
-
-		// If the config contains a URL we call Warm() anyway because AIWorker will just register
-		// the endpoint for an external container
-		if config.Warm || config.URL != "" {
-			endpoint := worker.RunnerEndpoint{URL: config.URL, Token: config.Token}
-			if err := n.AIWorker.Warm(ctx, config.Pipeline, config.ModelID, endpoint, config.OptimizationFlags); err != nil {
-				return nil, nil, fmt.Errorf("Error AI worker warming %v container: %v", config.Pipeline, err)
-			}
-		}
-
-		// Show warning if people set OptimizationFlags but not Warm.
-		if len(config.OptimizationFlags) > 0 && !config.Warm {
-			glog.Warningf("Model %v has 'optimization_flags' set without 'warm'. Optimization flags are currently only used for warm containers.", config.ModelID)
-		}
-
 		pipelineCap := PipelineToCapability(config.Pipeline)
 
 		if pipelineCap > Capability_Unused {
@@ -150,6 +135,19 @@ func (n *LivepeerNode) AddAIConfigs(ctx context.Context, configs []AIModelConfig
 					glog.V(6).Infof("Capability %s (ID: %v) advertised with model constraint %s price updated to %d per %d unit", config.Pipeline, pipelineCap, config.ModelID, configPrice.Num(), configPrice.Denom())
 				}
 			} else {
+				// If the config contains a URL we call Warm() anyway because AIWorker will just register
+				// the endpoint for an external container
+				if config.Warm || config.URL != "" {
+					endpoint := worker.RunnerEndpoint{URL: config.URL, Token: config.Token}
+					if err := n.AIWorker.Warm(ctx, config.Pipeline, config.ModelID, endpoint, config.OptimizationFlags); err != nil {
+						return nil, nil, fmt.Errorf("Error AI worker warming %v container: %v", config.Pipeline, err)
+					}
+				}
+
+				// Show warning if people set OptimizationFlags but not Warm.
+				if len(config.OptimizationFlags) > 0 && !config.Warm {
+					glog.Warningf("Model %v has 'optimization_flags' set without 'warm'. Optimization flags are currently only used for warm containers.", config.ModelID)
+				}
 				_, ok := constraints[pipelineCap]
 				if !ok {
 					aiCaps = append(aiCaps, pipelineCap)
