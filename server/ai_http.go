@@ -163,7 +163,7 @@ func (h *lphttp) AudioToText() http.Handler {
 func (h *lphttp) RegisterAIWorker() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		remoteAddr := getRemoteAddr(r)
-		glog.Infof("register worker request received from %v", remoteAddr)
+		glog.V(common.DEBUG).Infof("register worker request received from %v", remoteAddr)
 
 		creds := r.Header.Get("Credentials")
 		if creds != h.node.OrchSecret {
@@ -188,6 +188,10 @@ func (h *lphttp) RegisterAIWorker() http.Handler {
 		if len(newCaps) > 0 {
 			h.node.AddAICapabilities(ctx, newCaps, newConstraints)
 			glog.Infof("capabilities added from registered worker %v", remoteAddr)
+		} else {
+			w.WriteHeader(304)
+			return
+
 		}
 
 		if err != nil {
