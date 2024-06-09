@@ -11,6 +11,7 @@ import (
 	"github.com/golang/glog"
 
 	"github.com/livepeer/ai-worker/worker"
+	"github.com/livepeer/go-livepeer/common"
 	"github.com/livepeer/go-livepeer/net"
 )
 
@@ -113,9 +114,15 @@ func (n *LivepeerNode) AddAIConfigs(ctx context.Context, configs []AIModelConfig
 				currPrice := n.GetBasePriceForCap("default", pipelineCap, config.ModelID)
 				if configPrice.Cmp(currPrice) != 0 {
 					n.SetBasePriceForCap("default", pipelineCap, config.ModelID, configPrice)
-					glog.V(6).Infof("Capability %s (ID: %v) advertised with model constraint %s price updated to %d per %d unit", config.Pipeline, pipelineCap, config.ModelID, configPrice.Num(), configPrice.Denom())
+					glog.V(common.DEBUG).Infof("Capability %s (ID: %v) advertised with model constraint %s price updated to %d per %d unit", config.Pipeline, pipelineCap, config.ModelID, configPrice.Num(), configPrice.Denom())
 				}
-			} else {
+
+				//workers registration is one per registration request
+				return aiCaps, constraints, nil
+			}
+
+			//managed workers and external workers not registered
+			if config.URL == "" || !n.AIWorker.IsRegistered(config.URL, config.Pipeline, config.ModelID) {
 				// If the config contains a URL we call Warm() anyway because AIWorker will just register
 				// the endpoint for an external container
 				if config.Warm || config.URL != "" {
@@ -154,7 +161,7 @@ func (n *LivepeerNode) AddAIConfigs(ctx context.Context, configs []AIModelConfig
 		if len(aiCaps) > 0 {
 			capability := aiCaps[len(aiCaps)-1]
 			price := n.GetBasePriceForCap("default", capability, config.ModelID)
-			glog.V(6).Infof("Capability %s (ID: %v) advertised with model constraint %s at price %d per %d unit (%+v)", config.Pipeline, capability, config.ModelID, price.Num(), price.Denom(), modelConstraint)
+			glog.V(common.DEBUG).Infof("Capability %s (ID: %v) advertised with model constraint %s at price %d per %d unit (%+v)", config.Pipeline, capability, config.ModelID, price.Num(), price.Denom(), modelConstraint)
 		}
 	}
 
