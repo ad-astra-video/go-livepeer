@@ -104,11 +104,14 @@ func ParseAIModelConfigs(config string) ([]AIModelConfig, error) {
 func (n *LivepeerNode) AddAIConfigs(ctx context.Context, configs []AIModelConfig) ([]Capability, map[Capability]*Constraints, error) {
 	var aiCaps []Capability
 	constraints := make(map[Capability]*Constraints)
+
 	for _, config := range configs {
 		modelConstraint := &ModelConstraint{Warm: config.Warm, Capacity: 1}
 		pipelineCap := PipelineToCapability(config.Pipeline)
 
 		if pipelineCap > Capability_Unused {
+			//external worker and is registered, check the price only
+			//constraints should be changed with removing/re-registering worker
 			if config.URL != "" && n.AIWorker.IsRegistered(config.URL, config.Pipeline, config.ModelID) {
 				configPrice := big.NewRat(config.PricePerUnit, config.PixelsPerUnit)
 				currPrice := n.GetBasePriceForCap("default", pipelineCap, config.ModelID)
@@ -116,9 +119,6 @@ func (n *LivepeerNode) AddAIConfigs(ctx context.Context, configs []AIModelConfig
 					n.SetBasePriceForCap("default", pipelineCap, config.ModelID, configPrice)
 					glog.V(common.DEBUG).Infof("Capability %s (ID: %v) advertised with model constraint %s price updated to %d per %d unit", config.Pipeline, pipelineCap, config.ModelID, configPrice.Num(), configPrice.Denom())
 				}
-
-				//workers registration is one per registration request
-				return aiCaps, constraints, nil
 			}
 
 			//managed workers and external workers not registered
@@ -168,24 +168,29 @@ func (n *LivepeerNode) AddAIConfigs(ctx context.Context, configs []AIModelConfig
 	return aiCaps, constraints, nil
 }
 
-func (n *LivepeerNode) AddAICapabilities(ctx context.Context, aiCaps []Capability, aiConstraints map[Capability]*Constraints) error {
+func (n *LivepeerNode) RemoveAIConfigs(ctx context.Context, configs []AIModelConfig) ([]Capability, map[Capability]*Constraints, error) {
+	var aiCaps []Capability
+	constraints := make(map[Capability]*Constraints)
 
-	newCaps := NewCapabilitiesWithConstraints(aiCaps, nil, aiConstraints)
+	for _, config := range configs {
+		modelConstraint := &ModelConstraint{Warm: config.Warm, Capacity: 1}
+		pipelineCap := PipelineToCapability(config.Pipeline)
 
-	n.Capabilities.AddCapacity(newCaps)
-
-	var allCaps []Capability
-	currentCaps := n.Capabilities.ToNetCapabilities()
-
-	//all capabilities are in capacities (note: capacity is always 1 if the capability exists right now)
-	for capability, capacity := range currentCaps.Capacities {
-		if capacity > 0 {
-			allCaps = append(allCaps, Capability(capability))
+		if pipelineCap > Capability_Unused {
+			aiCaps = append(aiCaps, pipelineCap)
+			constraints[pipelineCap].Models[config.ModelID] = modelConstraint
 		}
 	}
-	for _, cap := range aiCaps {
-		if !slices.Contains(allCaps, cap) {
-			allCaps = append(allCaps, cap)
+
+	return aiCaps, constraints, nil
+}
+
+func (n *LivepeerNode) RemoveAICapabilities(ctx context.Context, aiCaps []Capability, aiConstraints map[Capability]*Constraints) error {
+	currentCaps := n.Capabilities.ToNetCapabilities()
+	//all capabilities are in capacities (note: capacity is always 1 if the capability exists right now)
+	for capability, capacity := range currentCaps.Capacities {
+		if capacity > 0 && slices.Contains(aiCaps, Capability(capability)) {
+			currentCaps.Capacities[capability] -= 1
 		}
 	}
 
@@ -193,19 +198,54 @@ func (n *LivepeerNode) AddAICapabilities(ctx context.Context, aiCaps []Capabilit
 
 	for capability, constraint := range aiConstraints {
 		_, ok := constraints[uint32(capability)]
+		if ok {
+			for model_id, _ := range constraint.Models {
+				if constraints[uint32(capability)].Models[model_id].Capacity > 0 {
+					constraints[uint32(capability)].Models[model_id].Capacity -= 1
+				}
+			}
+		}
+	}
+
+	//update node capabilities after adjustments
+	n.Capabilities.mutex.Lock()
+	defer n.Capabilities.mutex.Unlock()
+	n.Capabilities = CapabilitiesFromNetCapabilities(currentCaps)
+
+	return nil
+}
+
+func (n *LivepeerNode) AddAICapabilities(ctx context.Context, aiCaps []Capability, aiConstraints map[Capability]*Constraints) error {
+	currentCaps := n.Capabilities.ToNetCapabilities()
+
+	//all capabilities are in capacities (note: capacity is always 1 if the capability exists right now)
+	for _, aiCapability := range aiCaps {
+		currentCaps.Capacities[uint32(aiCapability)] += 1
+	}
+
+	for aiCapability, aiConstraint := range aiConstraints {
+		_, ok := currentCaps.Constraints[uint32(aiCapability)]
 		if !ok {
-			constraints[uint32(capability)] = &net.Capabilities_Constraints{
+			currentCaps.Constraints[uint32(aiCapability)] = &net.Capabilities_Constraints{
 				Models: make(map[string]*net.Capabilities_Constraints_ModelConstraint),
 			}
 		}
 
-		for model_id, modelConstraint := range constraint.Models {
-			constraints[uint32(capability)].Models[model_id] = &net.Capabilities_Constraints_ModelConstraint{Warm: modelConstraint.Warm}
+		for model_id, modelConstraint := range aiConstraint.Models {
+			_, model_exists := currentCaps.Constraints[uint32(aiCapability)].Models[model_id]
+			if model_exists {
+				currentCaps.Constraints[uint32(aiCapability)].Models[model_id].Capacity += 1
+			} else {
+				currentCaps.Constraints[uint32(aiCapability)].Models[model_id] = &net.Capabilities_Constraints_ModelConstraint{Warm: modelConstraint.Warm, Capacity: modelConstraint.Capacity}
+			}
 		}
 	}
-	caps := CapabilitiesFromNetCapabilities(currentCaps)
 
-	n.Capabilities = NewCapabilitiesWithConstraints(allCaps, MandatoryOCapabilities(), caps.constraints)
+	//update node capabilities after adjustments
+	n.Capabilities.mutex.Lock()
+	defer n.Capabilities.mutex.Unlock()
+	caps := CapabilitiesFromNetCapabilities(currentCaps)
+	n.Capabilities = caps
 
 	return nil
 }

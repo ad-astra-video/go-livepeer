@@ -44,6 +44,7 @@ func startAIServer(lp lphttp) error {
 	lp.transRPC.Handle("/image-to-image", oapiReqValidator(lp.ImageToImage()))
 	lp.transRPC.Handle("/image-to-video", oapiReqValidator(lp.ImageToVideo()))
 	lp.transRPC.Handle("/register-ai-worker", lp.RegisterAIWorker())
+	lp.transRPC.Handle("/remove-ai-worker", lp.RemoveAIWorker())
 
 	return nil
 }
@@ -135,21 +136,61 @@ func (h *lphttp) RegisterAIWorker() http.Handler {
 		}
 
 		newCaps, newConstraints, err := h.node.AddAIConfigs(ctx, configs)
-
-		if len(newCaps) > 0 {
-			h.node.AddAICapabilities(ctx, newCaps, newConstraints)
-			glog.Infof("capabilities added from registered worker %v", remoteAddr)
-		} else {
-			w.WriteHeader(304)
-			return
-
-		}
-
 		if err != nil {
 			respond500(w, fmt.Sprintf("Error adding workers: %v", err))
 		}
 
+		if len(newCaps) > 0 {
+			h.node.AddAICapabilities(ctx, newCaps, newConstraints)
+			glog.Infof("capabilities added for registered worker %v", remoteAddr)
+		} else {
+			w.WriteHeader(304)
+			return
+		}
+
 		respondOk(w, []byte("WORKER ADDED"))
+
+	})
+}
+
+func (h *lphttp) RemoveAIWorker() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		remoteAddr := getRemoteAddr(r)
+		glog.V(common.DEBUG).Infof("remove worker request received from %v", remoteAddr)
+
+		creds := r.Header.Get("Credentials")
+		if creds != h.node.OrchSecret {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		ctx := clog.AddVal(r.Context(), clog.ClientIP, remoteAddr)
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			respond400(w, "content must be aiModels json")
+		}
+		modelsString := string(body)
+		configs, err := core.ParseAIModelConfigs(modelsString)
+		if err != nil {
+			respond400(w, fmt.Sprintf("Error parsing -aiModels: %v", err))
+			return
+		}
+
+		removeCaps, removeConstraints, err := h.node.RemoveAIConfigs(ctx, configs)
+		if err != nil {
+			respond500(w, fmt.Sprintf("Error adding workers: %v", err))
+		}
+
+		if len(removeCaps) > 0 {
+			h.node.AddAICapabilities(ctx, removeCaps, removeConstraints)
+			glog.Infof("capabilities removed for registered worker %v", remoteAddr)
+		} else {
+			w.WriteHeader(304)
+			w.Write([]byte("worker did not have capabilities to remove"))
+			return
+		}
+
+		respondOk(w, []byte("WORKER REMOVED"))
 
 	})
 }
