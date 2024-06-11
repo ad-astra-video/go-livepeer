@@ -463,7 +463,7 @@ func CapabilitiesFromNetCapabilities(caps *net.Capabilities) *Capabilities {
 	for capabilityInt, constraints := range caps.Constraints {
 		models := make(map[string]*ModelConstraint)
 		for modelID, modelConstraint := range constraints.Models {
-			models[modelID] = &ModelConstraint{Warm: modelConstraint.Warm}
+			models[modelID] = &ModelConstraint{Warm: modelConstraint.Warm, Capacity: modelConstraint.Capacity}
 		}
 
 		coreCaps.constraints[Capability(capabilityInt)] = &Constraints{

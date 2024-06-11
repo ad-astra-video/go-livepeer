@@ -196,6 +196,10 @@ func (n *LivepeerNode) RemoveAIConfigs(ctx context.Context, configs []AIModelCon
 		pipelineCap := PipelineToCapability(config.Pipeline)
 
 		if pipelineCap > Capability_Unused {
+			constraints[pipelineCap] = &Constraints{
+				Models: make(map[string]*ModelConstraint),
+			}
+
 			aiCaps = append(aiCaps, pipelineCap)
 			constraints[pipelineCap].Models[config.ModelID] = modelConstraint
 		}
@@ -210,17 +214,19 @@ func (n *LivepeerNode) RemoveAICapabilities(ctx context.Context, aiCaps []Capabi
 	for capability, capacity := range currentCaps.Capacities {
 		if capacity > 0 && slices.Contains(aiCaps, Capability(capability)) {
 			currentCaps.Capacities[capability] -= 1
+			if currentCaps.Capacities[capability] == 0 {
+				delete(currentCaps.Capacities, capability)
+			}
 		}
 	}
 
-	constraints := currentCaps.Constraints
-
 	for capability, constraint := range aiConstraints {
-		_, ok := constraints[uint32(capability)]
+		_, ok := currentCaps.Constraints[uint32(capability)]
 		if ok {
 			for model_id, _ := range constraint.Models {
-				if constraints[uint32(capability)].Models[model_id].Capacity > 0 {
-					constraints[uint32(capability)].Models[model_id].Capacity -= 1
+				currentCaps.Constraints[uint32(capability)].Models[model_id].Capacity -= 1
+				if currentCaps.Constraints[uint32(capability)].Models[model_id].Capacity == 0 {
+					delete(currentCaps.Constraints, uint32(capability))
 				}
 			}
 		}
@@ -229,6 +235,7 @@ func (n *LivepeerNode) RemoveAICapabilities(ctx context.Context, aiCaps []Capabi
 	//update node capabilities after adjustments
 	n.Capabilities.mutex.Lock()
 	defer n.Capabilities.mutex.Unlock()
+
 	n.Capabilities = CapabilitiesFromNetCapabilities(currentCaps)
 
 	return nil
