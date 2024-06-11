@@ -182,7 +182,7 @@ func (h *lphttp) RemoveAIWorker() http.Handler {
 		}
 
 		if len(removeCaps) > 0 {
-			h.node.AddAICapabilities(ctx, removeCaps, removeConstraints)
+			h.node.RemoveAICapabilities(ctx, removeCaps, removeConstraints)
 			glog.Infof("capabilities removed for registered worker %v", remoteAddr)
 		} else {
 			w.WriteHeader(304)
