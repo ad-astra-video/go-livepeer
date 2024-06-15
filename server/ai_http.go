@@ -189,7 +189,7 @@ func (h *lphttp) RegisterAIWorker() http.Handler {
 			respond500(w, fmt.Sprintf("Error adding workers: %v", err))
 		}
 
-		if len(newCaps) > 0 {
+		if len(newCaps) > 0 || len(newConstraints) > 0 {
 			h.node.AddAICapabilities(ctx, newCaps, newConstraints)
 			glog.Infof("capabilities added for registered worker %v", remoteAddr)
 		} else {
@@ -230,7 +230,7 @@ func (h *lphttp) RemoveAIWorker() http.Handler {
 			respond500(w, fmt.Sprintf("Error adding workers: %v", err))
 		}
 
-		if len(removeCaps) > 0 {
+		if len(removeCaps) > 0 || len(removeConstraints) > 0 {
 			h.node.RemoveAICapabilities(ctx, removeCaps, removeConstraints)
 			glog.Infof("capabilities removed for registered worker %v", remoteAddr)
 		} else {
