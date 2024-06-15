@@ -26,6 +26,7 @@ type AI interface {
 	Stop(context.Context) error
 	HasCapacity(pipeline, modelID string) bool
 	IsRegistered(url, pipeline, modelID string) bool
+	Remove(context.Context, string, string, string) error
 }
 
 type AIModelConfig struct {
@@ -203,6 +204,9 @@ func (n *LivepeerNode) RemoveAIConfigs(ctx context.Context, configs []AIModelCon
 			aiCaps = append(aiCaps, pipelineCap)
 			constraints[pipelineCap].Models[config.ModelID] = modelConstraint
 		}
+
+		//remove worker from external containers
+		n.AIWorker.Remove(ctx, config.URL, config.Pipeline, config.ModelID)
 	}
 
 	return aiCaps, constraints, nil
