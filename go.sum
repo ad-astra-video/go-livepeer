@@ -64,8 +64,8 @@ github.com/StackExchange/wmi v1.2.1 h1:VIkavFPXSjcnS+O8yTq7NI32k0R5Aj+v39y29VYDO
 github.com/StackExchange/wmi v1.2.1/go.mod h1:rcmrprowKIVzvc+NUiLncP2uuArMWLCbu9SBzvHz7e8=
 github.com/VictoriaMetrics/fastcache v1.12.1 h1:i0mICQuojGDL3KblA7wUNlY5lOK6a4bwt3uRKnkZU40=
 github.com/VictoriaMetrics/fastcache v1.12.1/go.mod h1:tX04vaqcNoQeGLD+ra5pU5sWkuxnzWhEzLwhP9w653o=
-github.com/ad-astra-video/ai-worker v0.0.0-20240627233341-d439094ac610 h1:syJIrkhNYBgIfBhInfzyxUT6YcNpFJsMAszqHV1wE9U=
-github.com/ad-astra-video/ai-worker v0.0.0-20240627233341-d439094ac610/go.mod h1:aMSJdOY0rlW57HO0D7WMi+KHDCC8g9yLJ+A8lSTBATU=
+github.com/ad-astra-video/ai-worker v0.0.0-20240628230140-5cbb6cc3f695 h1:rOtG1UFpAn9Q81gc6Vtw/fVcdQB8tnR710SsYavHBoI=
+github.com/ad-astra-video/ai-worker v0.0.0-20240628230140-5cbb6cc3f695/go.mod h1:aMSJdOY0rlW57HO0D7WMi+KHDCC8g9yLJ+A8lSTBATU=
 github.com/alecthomas/template v0.0.0-20160405071501-a0175ee3bccc/go.mod h1:LOuyumcjzFXgccqObfd/Ljyb9UuFJ6TxHnclSeseNhc=
 github.com/alecthomas/template v0.0.0-20190718012654-fb15b899a751/go.mod h1:LOuyumcjzFXgccqObfd/Ljyb9UuFJ6TxHnclSeseNhc=
 github.com/alecthomas/units v0.0.0-20151022065526-2efee857e7cf/go.mod h1:ybxpYRFXyAe+OPACYpWeL0wqObRcbAqCMya13uyzqw0=
