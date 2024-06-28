@@ -210,4 +210,4 @@ require (
 	rsc.io/tmplfunc v0.0.3 // indirect
 )
 
-replace github.com/livepeer/ai-worker => github.com/ad-astra-video/ai-worker v0.0.0-20240627233341-d439094ac610
+replace github.com/livepeer/ai-worker => github.com/ad-astra-video/ai-worker v0.0.0-20240628230140-5cbb6cc3f695
