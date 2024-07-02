@@ -163,6 +163,37 @@ func (rwm *RemoteAIWorkerManager) Process(ctx context.Context, requestID string,
 	return res, err
 }
 
+func (rwm *RemoteAIWorkerManager) RegisteredAIWorkersCount() int {
+	rwm.RWmutex.Lock()
+	defer rwm.RWmutex.Unlock()
+	return len(rwm.liveAIWorkers)
+}
+
+type RemoteAIWorkerInfo struct {
+	Address      string
+	Capabilities map[string]map[string]ModelConstraint
+}
+
+func (rwm *RemoteAIWorkerManager) RegisteredAIWorkersInfo() []RemoteAIWorkerInfo {
+	rwm.RWmutex.Lock()
+	res := make([]RemoteAIWorkerInfo, 0, len(rwm.liveAIWorkers))
+	for _, worker := range rwm.liveAIWorkers {
+		info := RemoteAIWorkerInfo{Address: worker.addr, Capabilities: make(map[string]map[string]ModelConstraint)}
+
+		for cap, _ := range worker.capacity {
+			pipeline := CapabilityNameLookup[Capability(cap)]
+			info.Capabilities[pipeline] = make(map[string]ModelConstraint)
+
+			for model, constraint := range worker.capacity[cap].Models {
+				info.Capabilities[pipeline][model] = ModelConstraint{Warm: constraint.Warm, Capacity: constraint.Capacity}
+			}
+		}
+		res = append(res, info)
+	}
+	rwm.RWmutex.Unlock()
+	return res
+}
+
 func (rwm *RemoteAIWorkerManager) selectWorker(requestID string, pipeline string, modelID string) (*RemoteAIWorker, error) {
 	rwm.RWmutex.Lock()
 	defer rwm.RWmutex.Unlock()
