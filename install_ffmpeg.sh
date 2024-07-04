@@ -184,9 +184,9 @@ if [[ "$BUILDOS" == "darwin" && "$GOOS" == "darwin" ]]; then
   EXTRA_FFMPEG_LDFLAGS="$EXTRA_FFMPEG_LDFLAGS -framework CoreFoundation -framework Security"
 elif [[ "$GOOS" == "windows" ]]; then
   EXTRA_FFMPEG_FLAGS="$EXTRA_FFMPEG_FLAGS --enable-cuda --enable-cuda-llvm --enable-cuvid --enable-nvenc --enable-decoder=h264_cuvid,hevc_cuvid,vp8_cuvid,vp9_cuvid --enable-filter=scale_cuda,signature_cuda,hwupload_cuda --enable-encoder=h264_nvenc,hevc_nvenc"
-elif [[ -e "/usr/local/cuda/lib64" ]]; then
-  echo "CUDA SDK detected, building with GPU support"
-  EXTRA_FFMPEG_FLAGS="$EXTRA_FFMPEG_FLAGS --enable-nonfree --enable-cuda-nvcc --enable-libnpp --enable-cuda --enable-cuda-llvm --enable-cuvid --enable-nvenc --enable-decoder=h264_cuvid,hevc_cuvid,vp8_cuvid,vp9_cuvid --enable-filter=scale_npp,signature_cuda,hwupload_cuda --enable-encoder=h264_nvenc,hevc_nvenc"
+#elif [[ -e "/usr/local/cuda/lib64" ]]; then
+#  echo "CUDA SDK detected, building with GPU support"
+#  EXTRA_FFMPEG_FLAGS="$EXTRA_FFMPEG_FLAGS --enable-nonfree --enable-cuda-nvcc --enable-libnpp --enable-cuda --enable-cuda-llvm --enable-cuvid --enable-nvenc --enable-decoder=h264_cuvid,hevc_cuvid,vp8_cuvid,vp9_cuvid --enable-filter=scale_npp,signature_cuda,hwupload_cuda --enable-encoder=h264_nvenc,hevc_nvenc"
 else
   echo "No CUDA SDK detected, building without GPU support"
 fi
@@ -208,13 +208,13 @@ if [[ ! -e "$ROOT/ffmpeg/libavcodec/libavcodec.a" ]]; then
   ./configure ${TARGET_OS:-} $DISABLE_FFMPEG_COMPONENTS --fatal-warnings \
     --enable-libx264 --enable-gpl \
     --enable-protocol=rtmp,file,pipe \
-    --enable-muxer=mp3,wav,flac,mpegts,hls,segment,mp4,hevc,matroska,webm,null --enable-demuxer=mp3,wav,flac,flv,mpegts,mp4,mov,webm,matroska,image2 \
+    --enable-muxer=mp3,wav,flac,mpegts,hls,segment,mp4,hevc,matroska,webm,null --enable-demuxer=mp3,wav,flac,flv,mpegts,mp4,mov,webm,matroska \
     --enable-bsf=h264_mp4toannexb,aac_adtstoasc,h264_metadata,h264_redundant_pps,hevc_mp4toannexb,extract_extradata \
-    --enable-parser=mpegaudio,aac,aac_latm,h264,hevc,vp8,vp9,png \
+    --enable-parser=mpegaudio,vorbis,opus,flac,aac,aac_latm,h264,hevc,vp8,vp9 \
     --enable-filter=abuffer,buffer,abuffersink,buffersink,afifo,fifo,aformat,format \
     --enable-filter=aresample,asetnsamples,fps,scale,hwdownload,select,livepeer_dnn,signature \
-    --enable-encoder=aac,opus,libx264 \
-    --enable-decoder=mp3,vorbis,aac,opus,h264,png \
+    --enable-encoder=mp3,vorbis,flac,aac,opus,libx264 \
+    --enable-decoder=mp3,vorbis,flac,aac,opus,h264 \
     --extra-cflags="${EXTRA_CFLAGS} -I${ROOT}/compiled/include -I/usr/local/cuda/include" \
     --extra-ldflags="${EXTRA_FFMPEG_LDFLAGS} -L${ROOT}/compiled/lib -L/usr/local/cuda/lib64" \
     --prefix="$ROOT/compiled" \
