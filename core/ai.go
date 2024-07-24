@@ -211,7 +211,7 @@ func (n *LivepeerNode) RemoveAICapabilities(ctx context.Context, aiCaps []Capabi
 			for model_id, _ := range constraint.Models {
 				currentCaps.Constraints[uint32(capability)].Models[model_id].Capacity -= 1
 				if currentCaps.Constraints[uint32(capability)].Models[model_id].Capacity == 0 {
-					delete(currentCaps.Constraints, uint32(capability))
+					delete(currentCaps.Constraints[uint32(capability)].Models, model_id)
 				}
 			}
 		}
