@@ -181,6 +181,49 @@ func setBroadcastConfigHandler() http.Handler {
 	})
 }
 
+func (s *LivepeerServer) setMaxPriceForCapability() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.LivepeerNode.NodeType == core.BroadcasterNode {
+			pricePerUnit := r.FormValue("maxPricePerUnit")
+			pixelsPerUnit := r.FormValue("pixelsPerUnit")
+			pipeline := r.FormValue("pipeline")
+			modelID := r.FormValue("modelID")
+
+			if pipeline == "" || modelID == "" {
+				respond400(w, "pipeline and modelID must be set")
+			}
+
+			if pricePerUnit != "" && pixelsPerUnit != "" {
+				pr, err := strconv.ParseInt(pricePerUnit, 10, 64)
+				if err != nil {
+					respond400(w, errors.Wrapf(err, "Error converting string to int64").Error())
+					return
+				}
+				px, err := strconv.ParseInt(pixelsPerUnit, 10, 64)
+				if err != nil {
+					respond400(w, errors.Wrapf(err, "Error converting string to int64").Error())
+					return
+				}
+				if px <= 0 {
+					respond400(w, fmt.Sprintf("pixels per unit must be greater than 0, provided %d", px))
+					return
+				}
+
+				var price *big.Rat
+				if pr > 0 {
+					price = big.NewRat(pr, px)
+				}
+
+				BroadcastCfg.SetCapabilityMaxPrice(core.PipelineToCapability(pipeline), modelID, price)
+				glog.Infof("Maximum price for capability %v/%v set to %d per %q pixels\n", pipeline, modelID, pr, px)
+			}
+
+		} else {
+			respond400(w, "Node must be gateway node to set max price per capability")
+		}
+	})
+}
+
 func getBroadcastConfigHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var pNames []string

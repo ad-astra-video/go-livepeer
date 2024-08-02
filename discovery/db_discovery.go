@@ -68,10 +68,14 @@ func NewDBOrchestratorPoolCache(ctx context.Context, node *core.LivepeerNode, rm
 	return dbo, nil
 }
 
-func (dbo *DBOrchestratorPoolCache) getURLs() ([]*url.URL, error) {
+func (dbo *DBOrchestratorPoolCache) getURLs(caps *net.Capabilities) ([]*url.URL, error) {
+	maxPrice := server.BroadcastCfg.MaxPrice()
+	if caps != nil {
+		maxPrice = server.BroadcastCfg.GetCapabilitiesMaxPrice(caps)
+	}
 	orchs, err := dbo.store.SelectOrchs(
 		&common.DBOrchFilter{
-			MaxPrice:       server.BroadcastCfg.MaxPrice(),
+			MaxPrice:       maxPrice,
 			CurrentRound:   dbo.rm.LastInitializedRound(),
 			UpdatedLastDay: true,
 		},
@@ -90,7 +94,7 @@ func (dbo *DBOrchestratorPoolCache) getURLs() ([]*url.URL, error) {
 }
 
 func (dbo *DBOrchestratorPoolCache) GetInfos() []common.OrchestratorLocalInfo {
-	uris, _ := dbo.getURLs()
+	uris, _ := dbo.getURLs(nil)
 	infos := make([]common.OrchestratorLocalInfo, 0, len(uris))
 	for _, uri := range uris {
 		infos = append(infos, common.OrchestratorLocalInfo{URL: uri, Score: common.Score_Untrusted})
@@ -101,7 +105,7 @@ func (dbo *DBOrchestratorPoolCache) GetInfos() []common.OrchestratorLocalInfo {
 func (dbo *DBOrchestratorPoolCache) GetOrchestrators(ctx context.Context, numOrchestrators int, suspender common.Suspender, caps common.CapabilityComparator,
 	scorePred common.ScorePred) (common.OrchestratorDescriptors, error) {
 
-	uris, err := dbo.getURLs()
+	uris, err := dbo.getURLs(caps.ToNetCapabilities())
 	if err != nil || len(uris) <= 0 {
 		return nil, err
 	}
@@ -122,6 +126,13 @@ func (dbo *DBOrchestratorPoolCache) GetOrchestrators(ctx context.Context, numOrc
 
 		// check if O's price is below B's max price
 		maxPrice := server.BroadcastCfg.MaxPrice()
+		if caps != nil {
+			capPrice := server.BroadcastCfg.GetCapabilitiesMaxPrice(caps.ToNetCapabilities())
+			if capPrice.Cmp(big.NewRat(0, 0)) != 0 {
+				maxPrice = capPrice
+			}
+		}
+
 		price, err := common.RatPriceInfo(info.PriceInfo)
 		if err != nil {
 			clog.V(common.DEBUG).Infof(ctx, "invalid price info orch=%v err=%q", info.GetTranscoder(), err)

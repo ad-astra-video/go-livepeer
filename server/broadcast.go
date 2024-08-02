@@ -56,8 +56,9 @@ var submitMultiSession = func(ctx context.Context, sess *BroadcastSession, seg *
 var maxTranscodeAttempts = errors.New("hit max transcode attempts")
 
 type BroadcastConfig struct {
-	maxPrice *big.Rat
-	mu       sync.RWMutex
+	maxPrice              *big.Rat
+	maxPricePerCapability map[core.Capability]map[string]*big.Rat
+	mu                    sync.RWMutex
 }
 
 type SegFlightMetadata struct {
@@ -78,6 +79,52 @@ func (cfg *BroadcastConfig) SetMaxPrice(price *big.Rat) {
 
 	if monitor.Enabled {
 		monitor.MaxTranscodingPrice(price)
+	}
+}
+
+// gets prices for a set of capabilities
+func (cfg *BroadcastConfig) GetCapabilitiesMaxPrice(caps *net.Capabilities) *big.Rat {
+	price := big.NewRat(0, 0)
+	for capabilityInt, constraints := range caps.Constraints {
+		for modelID, _ := range constraints.Models {
+			capPrice := cfg.GetCapabilityMaxPrice(core.Capability(capabilityInt), modelID)
+			price.Add(price, capPrice)
+		}
+	}
+
+	//if no prices set per model, return maxPrice
+	if price.Cmp(big.NewRat(0, 0)) == 0 {
+		price = cfg.maxPrice
+	}
+
+	return price
+}
+
+func (cfg *BroadcastConfig) GetCapabilityMaxPrice(cap core.Capability, modelID string) *big.Rat {
+	models, ok := cfg.maxPricePerCapability[cap]
+	if ok {
+		_, modelOk := models[modelID]
+		if modelOk {
+			return cfg.maxPricePerCapability[cap][modelID]
+		} else {
+			_, hasDefault := models["default"]
+			if hasDefault {
+				return cfg.maxPricePerCapability[cap]["default"]
+			}
+		}
+	}
+
+	//no price set for capability, return 0
+	return big.NewRat(0, 0)
+}
+
+func (cfg *BroadcastConfig) SetCapabilityMaxPrice(cap core.Capability, modelID string, newPrice *big.Rat) {
+	models, ok := cfg.maxPricePerCapability[cap]
+	if ok {
+		_, modelOk := models[modelID]
+		if modelOk {
+			cfg.maxPricePerCapability[cap][modelID] = newPrice
+		}
 	}
 }
 

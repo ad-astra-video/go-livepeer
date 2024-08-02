@@ -52,6 +52,25 @@ func (w *wizard) allTranscodingOptions() map[int]string {
 	return optIds
 }
 
+func (w *wizard) setBroadcastMaxPricePerCapability() {
+	fmt.Printf("Enter the pipeline to set price for: ")
+	pipeline := w.readString()
+	fmt.Printf("Enter the model id to set price for: ")
+	modelID := w.readString()
+	fmt.Printf("Enter the maximum price to pay in Wei (required) - ")
+	maxPricePerUnit := w.readDefaultInt(0)
+	pixelsPerUnit := 1
+
+	val := url.Values{
+		"pixelsPerUnit":   {fmt.Sprintf("%v", strconv.Itoa(pixelsPerUnit))},
+		"maxPricePerUnit": {fmt.Sprintf("%v", strconv.Itoa(maxPricePerUnit))},
+		"pipeline":        {fmt.Sprintf("%v", pipeline)},
+		"modelID":         {fmt.Sprintf("%v", modelID)},
+	}
+
+	httpPostWithParams(fmt.Sprintf("http://%v:%v/setMaxPricePerCapability", w.host, w.httpPort), val)
+}
+
 func (w *wizard) setBroadcastConfig() {
 	fmt.Printf("Enter a maximum transcoding price per pixel, in wei per pixels (pricePerUnit / pixelsPerUnit).\n")
 	fmt.Printf("eg. 1 wei / 10 pixels = 0,1 wei per pixel \n")
