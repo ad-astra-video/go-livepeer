@@ -349,6 +349,7 @@ func (rw *RemoteAIWorker) Process(logCtx context.Context, pipeline string, model
 		return signalEOF(err)
 	}
 
+	clog.V(common.DEBUG).Infof(logCtx, "Job sent to AI worker worker=%s taskId=%d pipeline=%s model_id=%s err=%q", rw.addr, taskID, pipeline, modelID)
 	// set a minimum timeout to accommodate transport / processing overhead
 	//TODO: this should be set for each pipeline, using something long for now
 	dur := 15 * time.Minute
