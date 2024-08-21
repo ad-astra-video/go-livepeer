@@ -89,10 +89,12 @@ func (ls *LivepeerServer) TextToImage() http.Handler {
 
 		clog.V(common.VERBOSE).Infof(r.Context(), "Received TextToImage request prompt=%v model_id=%v", req.Prompt, *req.ModelId)
 
+		orchAddr := r.Header.Get("OrchAddr")
 		params := aiRequestParams{
 			node:        ls.LivepeerNode,
 			os:          drivers.NodeStorage.NewSession(requestID),
 			sessManager: ls.AISessionManager,
+			orchAddr:    orchAddr,
 		}
 
 		start := time.Now()
@@ -137,10 +139,12 @@ func (ls *LivepeerServer) ImageToImage() http.Handler {
 
 		clog.V(common.VERBOSE).Infof(ctx, "Received ImageToImage request imageSize=%v prompt=%v model_id=%v", req.Image.FileSize(), req.Prompt, *req.ModelId)
 
+		orchAddr := r.Header.Get("OrchAddr")
 		params := aiRequestParams{
 			node:        ls.LivepeerNode,
 			os:          drivers.NodeStorage.NewSession(requestID),
 			sessManager: ls.AISessionManager,
+			orchAddr:    orchAddr,
 		}
 
 		start := time.Now()
@@ -191,10 +195,12 @@ func (ls *LivepeerServer) ImageToVideo() http.Handler {
 
 		clog.V(common.VERBOSE).Infof(ctx, "Received ImageToVideo request imageSize=%v model_id=%v async=%v", req.Image.FileSize(), *req.ModelId, async)
 
+		orchAddr := r.Header.Get("OrchAddr")
 		params := aiRequestParams{
 			node:        ls.LivepeerNode,
 			os:          drivers.NodeStorage.NewSession(requestID),
 			sessManager: ls.AISessionManager,
+			orchAddr:    orchAddr,
 		}
 
 		if !async {
@@ -295,10 +301,12 @@ func (ls *LivepeerServer) Upscale() http.Handler {
 
 		clog.V(common.VERBOSE).Infof(ctx, "Received Upscale request imageSize=%v prompt=%v model_id=%v", req.Image.FileSize(), req.Prompt, *req.ModelId)
 
+		orchAddr := r.Header.Get("OrchAddr")
 		params := aiRequestParams{
 			node:        ls.LivepeerNode,
 			os:          drivers.NodeStorage.NewSession(requestID),
 			sessManager: ls.AISessionManager,
+			orchAddr:    orchAddr,
 		}
 
 		start := time.Now()
@@ -343,10 +351,12 @@ func (ls *LivepeerServer) AudioToText() http.Handler {
 
 		clog.V(common.VERBOSE).Infof(ctx, "Received AudioToText request audioSize=%v model_id=%v", req.Audio.FileSize(), *req.ModelId)
 
+		orchAddr := r.Header.Get("OrchAddr")
 		params := aiRequestParams{
 			node:        ls.LivepeerNode,
 			os:          drivers.NodeStorage.NewSession(requestID),
 			sessManager: ls.AISessionManager,
+			orchAddr:    orchAddr,
 		}
 
 		start := time.Now()
