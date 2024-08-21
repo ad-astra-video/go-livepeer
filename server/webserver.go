@@ -52,6 +52,7 @@ func (s *LivepeerServer) cliWebServerHandlers(bindAddr string) *http.ServeMux {
 	mux.Handle("/setMaxPriceForCapability", mustHaveFormParams(s.setMaxPriceForCapability(), "maxPricePerUnit", "pixelsPerUnit", "currency", "pipeline", "modelID"))
 	mux.Handle("/getSessionPoolInfo", s.getSessionPoolInfoHandler())
 	mux.Handle("/getOrchestratorInfo", s.getOrchestratorInfoHandler())
+	mux.Handle("/getAIPools", s.getAIPoolsHandler())
 
 	// Rounds
 	mux.Handle("/currentRound", currentRoundHandler(client))
