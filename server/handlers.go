@@ -1867,7 +1867,7 @@ func capsForGetOrchestrator(pipeline, modelID string) *core.Capabilities {
 	capabilityConstraints := core.PerCapabilityConstraints{
 		pipelineCap: {
 			Models: map[string]*core.ModelConstraint{
-				smodelID: {
+				modelID: {
 					Warm: false, //follows patternin ai_session.go to not limit by warm/cold models
 				},
 			},
