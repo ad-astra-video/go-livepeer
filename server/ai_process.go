@@ -88,6 +88,7 @@ type aiRequestParams struct {
 	node        *core.LivepeerNode
 	os          drivers.OSSession
 	sessManager *AISessionManager
+	orchAddr    string
 
 	liveParams *liveRequestParams
 }
@@ -1483,7 +1484,7 @@ func processAIRequest(ctx context.Context, params aiRequestParams, req interface
 		}
 
 		tries++
-		sess, err := params.sessManager.Select(ctx, cap, modelID)
+		sess, err := params.sessManager.Select(ctx, cap, modelID, params.orchAddr)
 		if err != nil {
 			clog.Infof(ctx, "Error selecting session modelID=%v err=%v", modelID, err)
 			continue
