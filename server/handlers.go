@@ -15,6 +15,7 @@ import (
 
 	"github.com/cenkalti/backoff"
 	ethcommon "github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/signer/core/apitypes"
 	"github.com/golang/glog"
@@ -24,6 +25,7 @@ import (
 	"github.com/livepeer/go-livepeer/eth"
 	"github.com/livepeer/go-livepeer/eth/types"
 	"github.com/livepeer/go-livepeer/monitor"
+	"github.com/livepeer/go-livepeer/net"
 	"github.com/livepeer/go-livepeer/pm"
 	"github.com/livepeer/lpms/ffmpeg"
 	"github.com/pkg/errors"
@@ -410,6 +412,109 @@ func (s *LivepeerServer) getNetworkCapabilitiesHandler() http.Handler {
 		}
 
 		respondJson(w, capModels)
+	})
+}
+
+func (s *LivepeerServer) getOrchestratorInfoHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.LivepeerNode.NodeType == core.BroadcasterNode {
+			//create GetOrchestrator request
+			b := core.NewBroadcaster(s.LivepeerNode)
+			b_sig, err := b.Sign([]byte(fmt.Sprintf("%v", b.Address().Hex())))
+			if err != nil {
+				respond500(w, "could not create sig")
+			}
+			caps := capsForGetOrchestrator(r.Header.Get("Pipeline"), r.Header.Get("Model"))
+			caps.SetMinVersionConstraint(s.LivepeerNode.Capabilities.MinVersionConstraint())
+			req := &net.OrchestratorRequest{Address: b.Address().Bytes(), Sig: b_sig, Capabilities: caps.ToNetCapabilities()}
+
+			//send GetOrchestrator request
+			orch_url := r.Header.Get("Url")
+			if orch_url != "" {
+				url, err := url.ParseRequestURI(orch_url)
+				if err != nil {
+					respond400(w, "could not parse url")
+				}
+				orch_info_resp := make(map[string]interface{})
+				client, conn, err := startOrchestratorClient(context.Background(), url)
+				defer conn.Close()
+				if conn != nil && err == nil {
+					start := time.Now()
+					orch_info, err := client.GetOrchestrator(context.Background(), req)
+					if err != nil {
+						orch_info_resp["Status"] = "failed"
+						orch_info_resp["Took"] = time.Since(start).Milliseconds()
+						respondJson(w, orch_info_resp)
+						return
+					}
+					//parse net.OrchestratorInfo to json
+					orch_info_resp["Status"] = "success"
+					orch_info_resp["Took"] = time.Since(start).Milliseconds()
+					orch_info_resp["Transcoder"] = orch_info.GetTranscoder()
+					orch_info_resp["Address"] = hexutil.Encode(orch_info.GetAddress())
+					if orch_info.GetAuthToken() != nil {
+						orch_info_resp["SessionID"] = orch_info.AuthToken.SessionId
+						orch_info_resp["Expiration"] = orch_info.AuthToken.Expiration
+					}
+
+					if orch_info.GetPriceInfo() != nil {
+						orch_info_resp["PricePerPixel"] = orch_info.PriceInfo.PricePerUnit
+						orch_info_resp["PixelsPerUnit"] = orch_info.PriceInfo.PixelsPerUnit
+					}
+
+					//parse some of the ticket params
+					//parsing from rpc.go func pmTicketParams()
+					if orch_info.GetTicketParams() != nil {
+						orch_info_resp["TicketParams"] = pmTicketParams(orch_info.TicketParams)
+					}
+					//parse the capabilities and capacities
+					if orch_info.GetCapabilities() != nil {
+						orch_info_resp["Version"] = orch_info.Capabilities.Version
+						capNameAndCapacity := make(map[string]int)
+
+						warmModels := make(map[string][]string)
+						coldModels := make(map[string][]string)
+						for capb, capc := range orch_info.Capabilities.Capacities {
+							capName, err := core.CapabilityToName(core.Capability(int(capb)))
+							if err == nil {
+								capNameAndCapacity[capName] = int(capc)
+							}
+						}
+
+						for capb, models := range orch_info.Capabilities.Constraints.PerCapability {
+							capName, err := core.CapabilityToName(core.Capability(int(capb)))
+							if err == nil {
+								for model, constraint := range models.Models {
+									if constraint.Warm {
+										warmModels[capName] = append(warmModels[capName], model)
+									} else {
+										coldModels[capName] = append(coldModels[capName], model)
+									}
+								}
+							}
+
+						}
+
+						orch_info_resp["Capabilities"] = capNameAndCapacity
+						orch_info_resp["WarmModels"] = warmModels
+						orch_info_resp["ColdModels"] = coldModels
+					}
+
+					//send orchestrator info received
+					respondJson(w, orch_info_resp)
+					return
+				} else {
+					respond500(w, "getorchestrator request failed: "+err.Error())
+					return
+				}
+			} else {
+				respond400(w, "url not provided")
+				return
+			}
+		} else {
+			respond400(w, "not broadcaster node")
+			return
+		}
 	})
 }
 
@@ -1750,4 +1855,33 @@ func mustHaveDb(db interface{}, h http.Handler) http.Handler {
 		}
 		h.ServeHTTP(w, r)
 	})
+}
+
+func capsForGetOrchestrator(pipeline, modelID string) *core.Capabilities {
+	if pipeline == "" {
+		return nil
+	}
+	if modelID == "" {
+		modelID = "default"
+	}
+
+	pipelineCap, err := core.PipelineToCapability(pipeline)
+	if err != nil {
+		return nil //pipeline not supported so return orchestrator info and pricing
+	}
+
+	capabilityConstraints := core.PerCapabilityConstraints{
+		pipelineCap: {
+			Models: map[string]*core.ModelConstraint{
+				modelID: {
+					Warm: false, //follows patternin ai_session.go to not limit by warm/cold models
+				},
+			},
+		},
+	}
+
+	caps := core.NewCapabilities(append(core.DefaultCapabilities(), pipelineCap), nil)
+	caps.SetPerCapabilityConstraints(capabilityConstraints)
+
+	return caps
 }
