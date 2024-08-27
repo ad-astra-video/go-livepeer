@@ -92,15 +92,19 @@ func (orch *orchestrator) ServeAIWorker(stream net.AIWorker_RegisterAIWorkerServ
 
 func (n *LivepeerNode) serveAIWorker(stream net.AIWorker_RegisterAIWorkerServer, capabilities *net.Capabilities) {
 	from := common.GetConnectionAddr(stream.Context())
-	coreCaps := CapabilitiesFromNetCapabilities(capabilities)
-	n.Capabilities.AddCapacity(coreCaps)
-	n.AddAICapabilities(nil, coreCaps.constraints.perCapability)
-	defer n.Capabilities.RemoveCapacity(coreCaps)
-	defer n.RemoveAICapabilities(nil, coreCaps.constraints.perCapability)
+	if n.Capabilities.LivepeerVersionCompatibleWith(capabilities) {
+		coreCaps := CapabilitiesFromNetCapabilities(capabilities)
+		n.Capabilities.AddCapacity(coreCaps)
+		n.AddAICapabilities(nil, coreCaps.constraints.perCapability)
+		defer n.Capabilities.RemoveCapacity(coreCaps)
+		defer n.RemoveAICapabilities(nil, coreCaps.constraints.perCapability)
 
-	// Manage blocks while AI worker is connected
-	n.AIWorkerManager.Manage(stream, capabilities)
-	glog.V(common.DEBUG).Infof("Closing aiworker=%s channel", from)
+		// Manage blocks while AI worker is connected
+		n.AIWorkerManager.Manage(stream, capabilities)
+		glog.V(common.DEBUG).Infof("Closing aiworker=%s channel", from)
+	} else {
+		glog.Errorf("worker not connected, version not compatible worker_version=%s orchestrator_version=%s", capabilities.Version, n.Capabilities.version)
+	}
 }
 
 // Manage adds aiworker to list of live aiworkers. Doesn't return until aiworker disconnects
