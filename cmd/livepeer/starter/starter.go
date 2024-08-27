@@ -1470,6 +1470,10 @@ func StartLivepeer(ctx context.Context, cfg LivepeerConfig) {
 	n.Capabilities.SetPerCapabilityConstraints(capabilityConstraints)
 	if cfg.OrchMinLivepeerVersion != nil {
 		n.Capabilities.SetMinVersionConstraint(*cfg.OrchMinLivepeerVersion)
+	} else if n.AIWorkerManager != nil {
+		// Set min version constraint to the orchestrator version
+		// to verify vesion of ai workers connecting
+		n.Capabilities.SetMinVersionConstraint(core.LivepeerVersion)
 	}
 
 	if drivers.NodeStorage == nil {
