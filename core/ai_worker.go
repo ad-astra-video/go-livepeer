@@ -92,12 +92,12 @@ func (orch *orchestrator) ServeAIWorker(stream net.AIWorker_RegisterAIWorkerServ
 
 func (n *LivepeerNode) serveAIWorker(stream net.AIWorker_RegisterAIWorkerServer, capabilities *net.Capabilities) {
 	from := common.GetConnectionAddr(stream.Context())
+	wkrCaps := CapabilitiesFromNetCapabilities(capabilities)
 	if n.Capabilities.LivepeerVersionCompatibleWith(capabilities) {
-		coreCaps := CapabilitiesFromNetCapabilities(capabilities)
-		n.Capabilities.AddCapacity(coreCaps)
-		n.AddAICapabilities(nil, coreCaps.constraints.perCapability)
-		defer n.Capabilities.RemoveCapacity(coreCaps)
-		defer n.RemoveAICapabilities(nil, coreCaps.constraints.perCapability)
+		n.Capabilities.AddCapacity(wkrCaps)
+		n.AddAICapabilities(nil, wkrCaps.constraints.perCapability)
+		defer n.Capabilities.RemoveCapacity(wkrCaps)
+		defer n.RemoveAICapabilities(nil, wkrCaps.constraints.perCapability)
 
 		// Manage blocks while AI worker is connected
 		n.AIWorkerManager.Manage(stream, capabilities)
