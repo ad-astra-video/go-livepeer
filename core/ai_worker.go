@@ -712,7 +712,7 @@ func (n *LivepeerNode) createStorageForRequest(requestID string) error {
 			defer cancel()
 			<-ctx.Done()
 			os.EndSession()
-			clog.Infof(ctx, "Ended session for requestIDID=%v", requestID)
+			clog.Infof(ctx, "Ended session for requestID=%v", requestID)
 		}()
 	}
 
