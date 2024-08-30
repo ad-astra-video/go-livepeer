@@ -93,9 +93,9 @@ func (n *LivepeerNode) serveAIWorker(stream net.AIWorker_RegisterAIWorkerServer,
 	wkrCaps := CapabilitiesFromNetCapabilities(capabilities)
 	if n.Capabilities.LivepeerVersionCompatibleWith(capabilities) {
 		n.Capabilities.AddCapacity(wkrCaps)
-		n.AddAICapabilities(nil, wkrCaps.constraints.perCapability)
+		n.AddAICapabilities(wkrCaps)
 		defer n.Capabilities.RemoveCapacity(wkrCaps)
-		defer n.RemoveAICapabilities(nil, wkrCaps.constraints.perCapability)
+		defer n.RemoveAICapabilities(wkrCaps)
 
 		// Manage blocks while AI worker is connected
 		n.AIWorkerManager.Manage(stream, capabilities)
