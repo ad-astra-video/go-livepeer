@@ -229,6 +229,7 @@ func newAICapabilities(cap core.Capability, modelID string, warm bool, minVersio
 }
 
 func (sel *AISessionSelector) Select(ctx context.Context) *AISession {
+
 	shouldRefreshSelector := func() bool {
 		// Refresh if the # of sessions across warm and cold pools falls below the smaller of the maxRefreshSessionsThreshold and
 		// 1/2 the total # of orchs that can be queried during discovery
@@ -385,6 +386,9 @@ func NewAISessionManager(node *core.LivepeerNode, ttl time.Duration) *AISessionM
 }
 
 func (c *AISessionManager) Select(ctx context.Context, cap core.Capability, modelID string, orchAddr string) (*AISession, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	sel, err := c.getSelector(ctx, cap, modelID)
 	if err != nil {
 		return nil, err
@@ -450,9 +454,6 @@ func (c *AISessionManager) Complete(ctx context.Context, sess *AISession) error 
 }
 
 func (c *AISessionManager) getSelector(ctx context.Context, cap core.Capability, modelID string) (*AISessionSelector, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	cacheKey := strconv.Itoa(int(cap)) + "_" + modelID
 	sel, ok := c.selectors[cacheKey]
 	if !ok {
