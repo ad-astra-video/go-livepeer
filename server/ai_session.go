@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/golang/glog"
 	"github.com/livepeer/go-livepeer/clog"
 	"github.com/livepeer/go-livepeer/common"
 	"github.com/livepeer/go-livepeer/core"
@@ -223,9 +224,11 @@ func (sel *AISessionSelector) Select(ctx context.Context) *AISession {
 		// Refresh if the # of sessions across warm and cold pools falls below the smaller of the maxRefreshSessionsThreshold and
 		// 1/2 the total # of orchs that can be queried during discovery
 		discoveryPoolSize := sel.node.OrchestratorPool.Size()
+		glog.Infof("warmPoolSize=%s coldPoolSize=%s maxRefreshSessionsThreshold=%s discoveryPoolSize=%d", sel.warmPool.Size(), sel.coldPool.Size(), discoveryPoolSize)
 		if sel.warmPool.Size()+sel.coldPool.Size() < int(math.Min(maxRefreshSessionsThreshold, math.Ceil(float64(discoveryPoolSize)/2.0))) {
 			return true
 		}
+		glog.Infof("not refreshing selector based on pool size")
 
 		// Refresh if the selector has expired
 		if time.Now().After(sel.lastRefreshTime.Add(sel.ttl)) {
