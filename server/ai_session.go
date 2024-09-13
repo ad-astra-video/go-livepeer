@@ -317,10 +317,13 @@ func (sel *AISessionSelector) Refresh(ctx context.Context) error {
 			continue
 		}
 
-		if modelConstraint.Warm {
-			warmSessions = append(warmSessions, sess)
-		} else {
-			coldSessions = append(coldSessions, sess)
+		//if orchestrator not suspended add to session pool
+		if sel.suspender.Suspended(sess.Transcoder()) == 0 {
+			if modelConstraint.Warm {
+				warmSessions = append(warmSessions, sess)
+			} else {
+				coldSessions = append(coldSessions, sess)
+			}
 		}
 	}
 
