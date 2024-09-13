@@ -432,6 +432,8 @@ func (c *AISessionManager) Select(ctx context.Context, cap core.Capability, mode
 }
 
 func (c *AISessionManager) Remove(ctx context.Context, sess *AISession) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	sel, err := c.getSelector(ctx, sess.Cap, sess.ModelID)
 	if err != nil {
 		return err
@@ -443,6 +445,8 @@ func (c *AISessionManager) Remove(ctx context.Context, sess *AISession) error {
 }
 
 func (c *AISessionManager) Complete(ctx context.Context, sess *AISession) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	sel, err := c.getSelector(ctx, sess.Cap, sess.ModelID)
 	if err != nil {
 		return err
