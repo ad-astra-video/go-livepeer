@@ -128,7 +128,7 @@ func (pool *AISessionPool) Remove(sess *BroadcastSession) {
 	pool.inUseSess = removeSessionFromList(pool.inUseSess, sess)
 
 	// Magic number for now
-	penalty := 3
+	penalty := 0
 	// If this method is called assume that the orch should be suspended
 	// as well
 	pool.suspender.suspend(sess.Transcoder(), penalty)
