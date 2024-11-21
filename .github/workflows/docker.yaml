@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - master
+      - "av*"
     tags:
       - "v*"
     paths-ignore:
@@ -22,7 +23,7 @@ jobs:
     permissions:
       packages: write
       contents: read
-    runs-on: [self-hosted, linux, amd64]
+    runs-on: ubuntu-22.04
     steps:
       - name: Check out code
         uses: actions/checkout@v4
@@ -48,7 +49,7 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: |
-            livepeer/go-livepeer
+            adastravideo/go-livepeer
             ghcr.io/${{ github.repository }}
           tags: |
             type=sha
@@ -92,8 +93,8 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           annotations: ${{ steps.meta.outputs.annotations }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=registry,ref=livepeerci/build:cache
-          cache-to: type=registry,ref=livepeerci/build:cache,mode=max
+          cache-from: type=registry,ref=adastravideo/build:cache
+          cache-to: type=registry,ref=adastravideo/build:cache,mode=max
 
   builder:
     name: go-livepeer builder docker image generation
@@ -123,7 +124,7 @@ jobs:
         id: match-tag
         with:
           text: ${{ github.ref_name }}
-          regex: '^(main|master|v[0-9]+\.\d+\.\d+)$'
+          regex: '^(main|master|v[0-9]+\.\d+\.\d+|av*)$'
 
       - name: Get build tags
         id: build-tag
@@ -141,7 +142,7 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: |
-            livepeerci/build
+            adastravideo/build
             ghcr.io/${{ github.repository }}/build
           tags: |
             type=sha
