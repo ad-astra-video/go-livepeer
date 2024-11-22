@@ -2,9 +2,11 @@ package common
 
 import (
 	"fmt"
+	"io"
 	"math"
 	"math/big"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -15,6 +17,7 @@ import (
 	"github.com/jaypipes/pcidb"
 	"github.com/livepeer/go-livepeer/net"
 	"github.com/livepeer/lpms/ffmpeg"
+	"github.com/oapi-codegen/runtime/types"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -475,4 +478,18 @@ func TestMimeTypeToExtension(t *testing.T) {
 	invalidContentType := "invalid/type"
 	_, err := MimeTypeToExtension(invalidContentType)
 	assert.Equal(ErrNoExtensionsForType, err)
+}
+
+func TestCalculateAudioDuration(t *testing.T) {
+	var audioFile types.File
+	f, _ := os.Open("/mnt/c/test/audio_test.m4a")
+	defer f.Close()
+	fileBytes, _ := io.ReadAll(f)
+	audioFile.InitFromBytes(fileBytes, "audio")
+	// Test valid audio duration
+	audioDuration, err := CalculateAudioDuration(audioFile)
+	if err != nil {
+		t.Error(err.Error())
+	}
+	t.Log(audioDuration)
 }

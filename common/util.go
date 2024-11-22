@@ -464,12 +464,6 @@ func ParseEthAddr(strJsonKey string) (string, error) {
 
 // CalculateAudioDuration calculates audio file duration using the lpms/ffmpeg package.
 func CalculateAudioDuration(audio types.File) (int64, error) {
-	read, err := audio.Reader()
-	if err != nil {
-		return 0, err
-	}
-	defer read.Close()
-
 	bytearr, _ := audio.Bytes()
 	_, mediaFormat, err := ffmpeg.GetCodecInfoBytes(bytearr)
 	if err != nil {
