@@ -11,6 +11,7 @@ import (
 	"github.com/livepeer/go-livepeer/clog"
 	"github.com/livepeer/go-livepeer/common"
 	"github.com/livepeer/go-livepeer/core"
+	"github.com/livepeer/go-livepeer/server"
 	"github.com/livepeer/go-tools/drivers"
 	"github.com/livepeer/lpms/stream"
 )
@@ -272,6 +273,9 @@ func (sel *AISessionSelector) Remove(sess *AISession) {
 }
 
 func (sel *AISessionSelector) Refresh(ctx context.Context) error {
+	//save balances to include in the new sessions created
+	warmBalances, coldBalances := sel.getBalances(ctx)
+
 	sessions, err := sel.getSessions(ctx)
 	if err != nil {
 		return err
@@ -293,8 +297,16 @@ func (sel *AISessionSelector) Refresh(ctx context.Context) error {
 		}
 
 		if modelConstraint.Warm {
+			if balance, ok := warmBalances[sess.Transcoder()]; ok {
+				sess.Balance = balance
+			}
+
 			warmSessions = append(warmSessions, sess)
 		} else {
+			if balance, ok := coldBalances[sess.Transcoder()]; ok {
+				sess.Balance = balance
+			}
+
 			coldSessions = append(coldSessions, sess)
 		}
 	}
@@ -305,6 +317,21 @@ func (sel *AISessionSelector) Refresh(ctx context.Context) error {
 	sel.lastRefreshTime = time.Now()
 
 	return nil
+}
+
+func (sel *AISessionSelector) getBalances(ctx context.Context) (map[string]*server.Balance, map[string]*server.Balance) {
+	warmBalances := make(map[string]*server.Balance)
+	coldBalances := make(map[string]*server.Balance)
+
+	for _, sess := range sel.warmPool.sessMap {
+		warmBalances[sess.Transcoder()] = sess.Balance
+	}
+
+	for _, sess := range sel.coldPool.sessMap {
+		coldBalances[sess.Transcoder()] = sess.Balance
+	}
+
+	return warmBalances, coldBalances
 }
 
 func (sel *AISessionSelector) getSessions(ctx context.Context) ([]*BroadcastSession, error) {
