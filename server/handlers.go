@@ -318,6 +318,71 @@ func (s *LivepeerServer) getSessionPoolInfoHandler() http.Handler {
 
 }
 
+func (s *LivepeerServer) getAIPoolsInfoHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		aiPoolInfoResp := make(map[string]interface{})
+		glog.V(common.DEBUG).Infof("getting AI pool info for %d selectors", len(s.AISessionManager.selectors))
+		s.AISessionManager.mu.Lock()
+		defer s.AISessionManager.mu.Unlock()
+		showDetail := r.Header.Get("Show-Detail")
+
+		type poolOrchestrator struct {
+			Url      string  `json:"url"`
+			Latency  float64 `json:"latency"`
+			InFlight int     `json:"in_flight"`
+		}
+		type aiPoolInfo struct {
+			Size          int                `json:"size"`
+			InUse         int                `json:"in_use"`
+			Orchestrators []poolOrchestrator `json:"orchestrators"`
+		}
+
+		type aiOrchestratorPool struct {
+			Cold      aiPoolInfo     `json:"cold"`
+			Warm      aiPoolInfo     `json:"warm"`
+			Suspended map[string]int `json:"suspended"`
+		}
+
+		for cap, pool := range s.AISessionManager.selectors {
+			warmPool := aiPoolInfo{
+				Size:  pool.warmPool.Size(),
+				InUse: len(pool.warmPool.inUseSess),
+			}
+			coldPool := aiPoolInfo{
+				Size:  pool.coldPool.Size(),
+				InUse: len(pool.coldPool.inUseSess),
+			}
+
+			if showDetail != "" {
+				for _, sess := range pool.warmPool.sessMap {
+					poolOrchestrator := poolOrchestrator{
+						Url:      sess.Transcoder(),
+						Latency:  sess.LatencyScore,
+						InFlight: len(sess.SegsInFlight),
+					}
+					warmPool.Orchestrators = append(warmPool.Orchestrators, poolOrchestrator)
+				}
+
+				for _, sess := range pool.coldPool.sessMap {
+					poolOrchestrator := poolOrchestrator{
+						Url:      sess.Transcoder(),
+						Latency:  sess.LatencyScore,
+						InFlight: len(sess.SegsInFlight),
+					}
+					coldPool.Orchestrators = append(coldPool.Orchestrators, poolOrchestrator)
+				}
+
+			}
+
+			selectorPools := aiOrchestratorPool{Cold: coldPool, Warm: warmPool, Suspended: pool.suspender.list}
+			aiPoolInfoResp[cap] = selectorPools
+		}
+
+		glog.V(common.DEBUG).Infof("sending AI pool info for %d selectors", len(s.AISessionManager.selectors))
+		respondJson(w, aiPoolInfoResp)
+	})
+}
+
 // Rounds
 func currentRoundHandler(client eth.LivepeerEthClient) http.Handler {
 	return mustHaveClient(client, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
