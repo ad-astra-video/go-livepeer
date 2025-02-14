@@ -1490,6 +1490,7 @@ func processAIRequest(ctx context.Context, params aiRequestParams, req interface
 	cctx, cancel := context.WithTimeout(ctx, processingRetryTimeout)
 	defer cancel()
 
+	params.sessManager.SortSessions(ctx, cap, modelID)
 	tries := 0
 	for {
 		select {
@@ -1515,11 +1516,16 @@ func processAIRequest(ctx context.Context, params aiRequestParams, req interface
 
 		resp, err = submitFn(ctx, params, sess)
 		if err == nil {
-			params.sessManager.Complete(ctx, sess)
+			params.sessManager.AddSessionBackToSelector(ctx, sess)
 			break
 		}
 
-		// Suspend the session on other errors.
+		// Don't suspend the session if the error is a transient error.
+		if isRetryableError(err) {
+			params.sessManager.AddSessionBackToSelector(ctx, sess)
+			continue
+		}
+
 		clog.Infof(ctx, "Error submitting request modelID=%v try=%v orch=%v err=%v", modelID, tries, sess.Transcoder(), err)
 		params.sessManager.Remove(ctx, sess) //TODO: Improve session selection logic for live-video-to-video
 
@@ -1540,6 +1546,23 @@ func processAIRequest(ctx context.Context, params aiRequestParams, req interface
 		return nil, &ServiceUnavailableError{err: errors.New(errMsg)}
 	}
 	return resp, nil
+}
+
+// isRetryableError checks if the error is a transient error that can be retried.
+func isRetryableError(err error) bool {
+	transientErrorMessages := []string{
+		"insufficient capacity",      // Caused by limitation in our current implementation.
+		"invalid ticket sendernonce", // Caused by gateway nonce mismatch.
+		"ticketparams expired",       // Caused by ticket expiration.
+	}
+
+	errMsg := strings.ToLower(err.Error())
+	for _, msg := range transientErrorMessages {
+		if strings.Contains(errMsg, msg) {
+			return true
+		}
+	}
+	return false
 }
 
 func prepareAIPayment(ctx context.Context, sess *AISession, outPixels int64) (worker.RequestEditorFn, *BalanceUpdate, error) {
