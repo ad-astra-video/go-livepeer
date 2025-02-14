@@ -70,6 +70,34 @@ func (pool *AISessionPool) Select(ctx context.Context) *BroadcastSession {
 	}
 }
 
+func (pool *AISessionPool) AddSessionBackToSelector(sess *BroadcastSession) {
+	pool.mu.Lock()
+	defer pool.mu.Unlock()
+
+	existingSess, ok := pool.sessMap[sess.Transcoder()]
+	if !ok {
+		// If the session is not tracked by sessMap, skip returning it to the selector
+		return
+	}
+
+	if sess != existingSess {
+		// If the session is tracked by sessMap AND it is different from what is tracked by sessMap
+		// skip returning it to the selector
+		return
+	}
+
+	// If there are still in-flight requests for the session return early
+	// and do not return the session to the selector
+	inFlight, _ := sess.popSegInFlight()
+	if inFlight > 0 {
+		return
+	}
+
+	pool.inUseSess = removeSessionFromList(pool.inUseSess, sess)
+
+	pool.selector.AddSessionBackToSelector(sess)
+}
+
 func (pool *AISessionPool) Complete(sess *BroadcastSession) {
 	pool.mu.Lock()
 	defer pool.mu.Unlock()
@@ -263,6 +291,14 @@ func (sel *AISessionSelector) Complete(sess *AISession) {
 	}
 }
 
+func (sel *AISessionSelector) AddSessionBackToSelector(sess *AISession) {
+	if sess.Warm {
+		sel.warmPool.AddSessionBackToSelector(sess.BroadcastSession)
+	} else {
+		sel.coldPool.AddSessionBackToSelector(sess.BroadcastSession)
+	}
+}
+
 func (sel *AISessionSelector) Remove(sess *AISession) {
 	if sess.Warm {
 		sel.warmPool.Remove(sess.BroadcastSession)
@@ -396,6 +432,17 @@ func (c *AISessionManager) Complete(ctx context.Context, sess *AISession) error 
 	return nil
 }
 
+func (c *AISessionManager) AddSessionBackToSelector(ctx context.Context, sess *AISession) error {
+	sel, err := c.getSelector(ctx, sess.Cap, sess.ModelID)
+	if err != nil {
+		return err
+	}
+
+	sel.AddSessionBackToSelector(sess)
+
+	return nil
+}
+
 func (c *AISessionManager) getSelector(ctx context.Context, cap core.Capability, modelID string) (*AISessionSelector, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -414,4 +461,16 @@ func (c *AISessionManager) getSelector(ctx context.Context, cap core.Capability,
 	}
 
 	return sel, nil
+}
+
+func (c *AISessionManager) SortSessions(ctx context.Context, cap core.Capability, modelID string) error {
+	sel, err := c.getSelector(ctx, cap, modelID)
+	if err != nil {
+		return err
+	}
+
+	sel.warmPool.selector.Sort()
+	sel.coldPool.selector.Sort()
+
+	return nil
 }

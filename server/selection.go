@@ -4,6 +4,7 @@ import (
 	"container/heap"
 	"context"
 	"math/big"
+	"sort"
 
 	ethcommon "github.com/ethereum/go-ethereum/common"
 	"github.com/livepeer/go-livepeer/clog"
@@ -16,9 +17,11 @@ const SELECTOR_LATENCY_SCORE_THRESHOLD = 1.0
 type BroadcastSessionsSelector interface {
 	Add(sessions []*BroadcastSession)
 	Complete(sess *BroadcastSession)
+	AddSessionBackToSelector(sess *BroadcastSession)
 	Select(ctx context.Context) *BroadcastSession
 	Size() int
 	Clear()
+	Sort()
 }
 
 type BroadcastSessionsSelectorFactory func() BroadcastSessionsSelector
@@ -129,6 +132,10 @@ func (s *MinLSSelector) Complete(sess *BroadcastSession) {
 	heap.Push(s.knownSessions, sess)
 }
 
+func (s *MinLSSelector) AddSessionBackToSelector(sess *BroadcastSession) {
+	s.unknownSessions = append(s.unknownSessions, sess)
+}
+
 // Select returns the session with the lowest latency score if it is good enough.
 // Otherwise, a session without a latency score yet is returned
 func (s *MinLSSelector) Select(ctx context.Context) *BroadcastSession {
@@ -155,6 +162,37 @@ func (s *MinLSSelector) Clear() {
 	s.unknownSessions = nil
 	s.knownSessions = &sessHeap{}
 	s.stakeRdr = nil
+}
+
+type sessWithScore []*BroadcastSession
+
+func (h sessWithScore) Len() int {
+	return len(h)
+}
+
+func (h sessWithScore) Less(i, j int) bool {
+	// If only one of them has LatencyScore 0, it should come last
+	if h[i].LatencyScore == 0 && h[j].LatencyScore != 0 {
+		return false
+	}
+	if h[i].LatencyScore != 0 && h[j].LatencyScore == 0 {
+		return true
+	}
+	// Otherwise, sort by LatencyScore normally
+	return h[i].LatencyScore < h[j].LatencyScore
+}
+
+func (h sessWithScore) Swap(i, j int) {
+	h[i], h[j] = h[j], h[i]
+}
+
+func (h *sessWithScore) Push(x interface{}) {
+	sess := x.(*BroadcastSession)
+	*h = append(*h, sess)
+}
+
+func (s *MinLSSelector) Sort() {
+	sort.Sort(sessWithScore(s.unknownSessions))
 }
 
 // Use selection algorithm to select from unknownSessions
@@ -241,6 +279,11 @@ func (s *LIFOSelector) Complete(sess *BroadcastSession) {
 	*s = append(*s, sess)
 }
 
+// AddSessionBackToSelector adds the session to the end of the selector's list
+func (s *LIFOSelector) AddSessionBackToSelector(sess *BroadcastSession) {
+	s.Complete(sess)
+}
+
 // Select returns the last session in the selector's list
 func (s *LIFOSelector) Select(ctx context.Context) *BroadcastSession {
 	sessList := *s
@@ -261,4 +304,8 @@ func (s *LIFOSelector) Size() int {
 // Clear resets the selector's state
 func (s *LIFOSelector) Clear() {
 	*s = nil
+}
+
+func (s *LIFOSelector) Sort() {
+	// no-op
 }
