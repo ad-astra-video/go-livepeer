@@ -83,6 +83,7 @@ type aiRequestParams struct {
 	node        *core.LivepeerNode
 	os          drivers.OSSession
 	sessManager *AISessionManager
+	requestID   string
 
 	liveParams liveRequestParams
 }
@@ -1487,6 +1488,12 @@ func processAIRequest(ctx context.Context, params aiRequestParams, req interface
 	var resp interface{}
 
 	processingRetryTimeout := params.node.AIProcesssingRetryTimeout
+	requestSelector, err := params.sessManager.createRequestSelector(ctx, cap, modelID, params.requestID)
+	defer delete(params.sessManager.requestSelectors, params.requestID)
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to create selector for request  err=%w", err)
+	}
 	cctx, cancel := context.WithTimeout(ctx, processingRetryTimeout)
 	defer cancel()
 
@@ -1503,9 +1510,9 @@ func processAIRequest(ctx context.Context, params aiRequestParams, req interface
 		}
 
 		tries++
-		sess, err := params.sessManager.Select(ctx, cap, modelID)
-		if err != nil {
-			clog.Infof(ctx, "Error selecting session modelID=%v err=%v", modelID, err)
+		sess := requestSelector.Select(ctx)
+		if sess == nil {
+			clog.Infof(ctx, "Error selecting session modelID=%v err=no sessions available", modelID)
 			continue
 		}
 
@@ -1515,13 +1522,18 @@ func processAIRequest(ctx context.Context, params aiRequestParams, req interface
 
 		resp, err = submitFn(ctx, params, sess)
 		if err == nil {
-			params.sessManager.Complete(ctx, sess)
+			requestSelector.Complete(sess)
 			break
 		}
 
-		// Suspend the session on other errors.
-		clog.Infof(ctx, "Error submitting request modelID=%v try=%v orch=%v err=%v", modelID, tries, sess.Transcoder(), err)
-		params.sessManager.Remove(ctx, sess) //TODO: Improve session selection logic for live-video-to-video
+		if isRetryableError(err) {
+			// Remove from requestSelector
+			requestSelector.RemoveFromSelector(sess)
+		} else {
+			// Suspend the session on other errors
+			clog.Infof(ctx, "Error submitting request modelID=%v try=%v orch=%v err=%v", modelID, tries, sess.Transcoder(), err)
+			params.sessManager.RemoveAndSuspend(ctx, sess) //TODO: Improve session selection logic for live-video-to-video
+		}
 
 		if errors.Is(err, common.ErrAudioDurationCalculation) {
 			return nil, &BadRequestError{err}
@@ -1540,6 +1552,22 @@ func processAIRequest(ctx context.Context, params aiRequestParams, req interface
 		return nil, &ServiceUnavailableError{err: errors.New(errMsg)}
 	}
 	return resp, nil
+}
+
+func isRetryableError(err error) bool {
+	transientErrorMessages := []string{
+		"insufficient capacity",      // Caused by limitation in our current implementation.
+		"invalid ticket sendernonce", // Caused by gateway nonce mismatch.
+		"ticketparams expired",       // Caused by ticket expiration.
+	}
+
+	errMsg := strings.ToLower(err.Error())
+	for _, msg := range transientErrorMessages {
+		if strings.Contains(errMsg, msg) {
+			return true
+		}
+	}
+	return false
 }
 
 func prepareAIPayment(ctx context.Context, sess *AISession, outPixels int64) (worker.RequestEditorFn, *BalanceUpdate, error) {

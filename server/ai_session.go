@@ -117,7 +117,25 @@ func (pool *AISessionPool) Add(sessions []*BroadcastSession) {
 	pool.selector.Add(uniqueSessions)
 }
 
-func (pool *AISessionPool) Remove(sess *BroadcastSession) {
+func (pool *AISessionPool) AddSessMap(sessions map[string]*BroadcastSession) {
+	pool.mu.Lock()
+	defer pool.mu.Unlock()
+
+	var uniqueSessions []*BroadcastSession
+	for key, sess := range sessions {
+		if _, ok := pool.sessMap[sess.Transcoder()]; ok {
+			// Skip the session if it is already tracked by sessMap
+			continue
+		}
+
+		pool.sessMap[key] = sess
+		uniqueSessions = append(uniqueSessions, sess)
+	}
+
+	pool.selector.Add(uniqueSessions)
+}
+
+func (pool *AISessionPool) RemoveAndSuspend(sess *BroadcastSession) {
 	pool.mu.Lock()
 	defer pool.mu.Unlock()
 
@@ -133,6 +151,14 @@ func (pool *AISessionPool) Remove(sess *BroadcastSession) {
 		penalty -= lastCount
 	}
 	pool.suspender.suspend(sess.Transcoder(), penalty)
+}
+
+func (pool *AISessionPool) RemoveFromSelector(sess *BroadcastSession) {
+	pool.mu.Lock()
+	defer pool.mu.Unlock()
+
+	delete(pool.sessMap, sess.Transcoder())
+	pool.inUseSess = removeSessionFromList(pool.inUseSess, sess)
 }
 
 func (pool *AISessionPool) Size() int {
@@ -285,11 +311,19 @@ func (sel *AISessionSelector) Complete(sess *AISession) {
 	}
 }
 
-func (sel *AISessionSelector) Remove(sess *AISession) {
+func (sel *AISessionSelector) RemoveAndSuspend(sess *AISession) {
 	if sess.Warm {
-		sel.warmPool.Remove(sess.BroadcastSession)
+		sel.warmPool.RemoveAndSuspend(sess.BroadcastSession)
 	} else {
-		sel.coldPool.Remove(sess.BroadcastSession)
+		sel.coldPool.RemoveAndSuspend(sess.BroadcastSession)
+	}
+}
+
+func (sel *AISessionSelector) RemoveFromSelector(sess *AISession) {
+	if sess.Warm {
+		sel.warmPool.RemoveFromSelector(sess.BroadcastSession)
+	} else {
+		sel.coldPool.RemoveFromSelector(sess.BroadcastSession)
 	}
 }
 
@@ -375,10 +409,11 @@ func (sel *AISessionSelector) getSessions(ctx context.Context) ([]*BroadcastSess
 }
 
 type AISessionManager struct {
-	node      *core.LivepeerNode
-	selectors map[string]*AISessionSelector
-	mu        sync.Mutex
-	ttl       time.Duration
+	node             *core.LivepeerNode
+	selectors        map[string]*AISessionSelector
+	requestSelectors map[string]AISessionSelector
+	mu               sync.Mutex
+	ttl              time.Duration
 }
 
 func NewAISessionManager(node *core.LivepeerNode, ttl time.Duration) *AISessionManager {
@@ -410,13 +445,24 @@ func (c *AISessionManager) Select(ctx context.Context, cap core.Capability, mode
 	return sess, nil
 }
 
-func (c *AISessionManager) Remove(ctx context.Context, sess *AISession) error {
+func (c *AISessionManager) RemoveAndSuspend(ctx context.Context, sess *AISession) error {
 	sel, err := c.getSelector(ctx, sess.Cap, sess.ModelID)
 	if err != nil {
 		return err
 	}
 
-	sel.Remove(sess)
+	sel.RemoveAndSuspend(sess)
+
+	return nil
+}
+
+func (c *AISessionManager) RemoveFromSelector(ctx context.Context, sess *AISession) error {
+	sel, err := c.getSelector(ctx, sess.Cap, sess.ModelID)
+	if err != nil {
+		return err
+	}
+
+	sel.RemoveFromSelector(sess)
 
 	return nil
 }
@@ -450,4 +496,47 @@ func (c *AISessionManager) getSelector(ctx context.Context, cap core.Capability,
 	}
 
 	return sel, nil
+}
+
+func (c *AISessionManager) createRequestSelector(ctx context.Context, cap core.Capability, modelID string, requestID string) (*AISessionSelector, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	capSelector, err := c.getSelector(ctx, cap, modelID)
+	if err != nil {
+		return nil, err
+	}
+	var requestSelector AISessionSelector
+	//TODO: save the stakeRdr in the first AISessionSelector
+	var stakeRdr stakeReader
+	if c.node.Eth != nil {
+		stakeRdr = &storeStakeReader{store: c.node.Database}
+	}
+	//TODO: save the minLS from the first AISessionSelector created
+	minLS := 0.0
+	warmSelector := NewMinLSSelector(stakeRdr, minLS, c.node.SelectionAlgorithm, c.node.OrchPerfScore, newAICapabilities(cap, modelID, true, c.node.Capabilities.MinVersionConstraint()))
+	coldSelector := NewMinLSSelector(stakeRdr, minLS, c.node.SelectionAlgorithm, c.node.OrchPerfScore, newAICapabilities(cap, modelID, false, c.node.Capabilities.MinVersionConstraint()))
+	warmPool := NewAISessionPool(warmSelector, capSelector.warmPool.suspender, capSelector.warmPool.penalty)
+	coldPool := NewAISessionPool(coldSelector, capSelector.coldPool.suspender, capSelector.coldPool.penalty)
+
+	//add sessions from main selector to the session pools which also adds the sessions to the selectors
+	warmPool.AddSessMap(capSelector.warmPool.sessMap)
+	coldPool.AddSessMap(capSelector.coldPool.sessMap)
+
+	requestSelector = AISessionSelector{
+		cap:       capSelector.cap,
+		modelID:   capSelector.modelID,
+		ttl:       capSelector.ttl,
+		node:      capSelector.node,
+		penalty:   capSelector.penalty,
+		os:        capSelector.os,
+		suspender: capSelector.suspender,
+		warmPool:  warmPool,
+		coldPool:  coldPool,
+	}
+
+	c.requestSelectors[requestID] = requestSelector
+
+	return capSelector, nil
+
 }
