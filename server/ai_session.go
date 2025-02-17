@@ -502,6 +502,7 @@ func (c *AISessionManager) createRequestSelector(ctx context.Context, cap core.C
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	start := time.Now()
 	capSelector, err := c.getSelector(ctx, cap, modelID)
 	if err != nil {
 		return nil, err
@@ -536,6 +537,8 @@ func (c *AISessionManager) createRequestSelector(ctx context.Context, cap core.C
 	}
 
 	c.requestSelectors[requestID] = requestSelector
+
+	clog.Infof(ctx, "Created request selector for requestID=%s in %v", requestID, time.Since(start))
 
 	return capSelector, nil
 
