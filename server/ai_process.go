@@ -1510,6 +1510,7 @@ func processAIRequest(ctx context.Context, params aiRequestParams, req interface
 		}
 
 		tries++
+		time.Sleep(100 * time.Millisecond)
 		sess := requestSelector.Select(ctx)
 		if sess == nil {
 			clog.Infof(ctx, "Error selecting session modelID=%v err=no sessions available", modelID)

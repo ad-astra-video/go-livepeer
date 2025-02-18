@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/golang/glog"
 	"github.com/livepeer/go-livepeer/clog"
 	"github.com/livepeer/go-livepeer/common"
 	"github.com/livepeer/go-livepeer/core"
@@ -125,6 +126,7 @@ func (pool *AISessionPool) AddSessMap(sessions map[string]*BroadcastSession) {
 	for key, sess := range sessions {
 		if _, ok := pool.sessMap[sess.Transcoder()]; ok {
 			// Skip the session if it is already tracked by sessMap
+			glog.Infof("skipping session %v", sess.Transcoder())
 			continue
 		}
 
@@ -291,16 +293,29 @@ func (sel *AISessionSelector) Select(ctx context.Context) *AISession {
 	}
 
 	sess := sel.warmPool.Select(ctx)
+	var aiSess *AISession
 	if sess != nil {
-		return &AISession{BroadcastSession: sess, Cap: sel.cap, ModelID: sel.modelID, Warm: true}
+		aiSess = &AISession{BroadcastSession: sess, Cap: sel.cap, ModelID: sel.modelID, Warm: true}
 	}
 
-	sess = sel.coldPool.Select(ctx)
-	if sess != nil {
-		return &AISession{BroadcastSession: sess, Cap: sel.cap, ModelID: sel.modelID, Warm: false}
+	if sess == nil {
+		sess = sel.coldPool.Select(ctx)
+		if sess != nil {
+			aiSess = &AISession{BroadcastSession: sess, Cap: sel.cap, ModelID: sel.modelID, Warm: false}
+		}
 	}
 
-	return nil
+	if sess == nil {
+		return nil
+	}
+
+	clog.Infof(ctx, "selected orchestrator=%s", sess.Transcoder())
+
+	if err := refreshSessionIfNeeded(ctx, aiSess.BroadcastSession); err != nil {
+		return nil
+	}
+
+	return aiSess
 }
 
 func (sel *AISessionSelector) Complete(sess *AISession) {
@@ -411,17 +426,18 @@ func (sel *AISessionSelector) getSessions(ctx context.Context) ([]*BroadcastSess
 type AISessionManager struct {
 	node             *core.LivepeerNode
 	selectors        map[string]*AISessionSelector
-	requestSelectors map[string]AISessionSelector
+	requestSelectors map[string]*AISessionSelector
 	mu               sync.Mutex
 	ttl              time.Duration
 }
 
 func NewAISessionManager(node *core.LivepeerNode, ttl time.Duration) *AISessionManager {
 	return &AISessionManager{
-		node:      node,
-		selectors: make(map[string]*AISessionSelector),
-		mu:        sync.Mutex{},
-		ttl:       ttl,
+		node:             node,
+		selectors:        make(map[string]*AISessionSelector),
+		requestSelectors: make(map[string]*AISessionSelector),
+		mu:               sync.Mutex{},
+		ttl:              ttl,
 	}
 }
 
@@ -435,12 +451,6 @@ func (c *AISessionManager) Select(ctx context.Context, cap core.Capability, mode
 	if sess == nil {
 		return nil, nil
 	}
-
-	if err := refreshSessionIfNeeded(ctx, sess.BroadcastSession); err != nil {
-		return nil, err
-	}
-
-	clog.V(common.DEBUG).Infof(ctx, "selected orchestrator=%s", sess.Transcoder())
 
 	return sess, nil
 }
@@ -499,9 +509,6 @@ func (c *AISessionManager) getSelector(ctx context.Context, cap core.Capability,
 }
 
 func (c *AISessionManager) createRequestSelector(ctx context.Context, cap core.Capability, modelID string, requestID string) (*AISessionSelector, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	start := time.Now()
 	capSelector, err := c.getSelector(ctx, cap, modelID)
 	if err != nil {
@@ -525,21 +532,21 @@ func (c *AISessionManager) createRequestSelector(ctx context.Context, cap core.C
 	coldPool.AddSessMap(capSelector.coldPool.sessMap)
 
 	requestSelector = AISessionSelector{
-		cap:       capSelector.cap,
-		modelID:   capSelector.modelID,
-		ttl:       capSelector.ttl,
-		node:      capSelector.node,
-		penalty:   capSelector.penalty,
-		os:        capSelector.os,
-		suspender: capSelector.suspender,
-		warmPool:  warmPool,
-		coldPool:  coldPool,
+		cap:             capSelector.cap,
+		modelID:         capSelector.modelID,
+		ttl:             capSelector.ttl,
+		node:            capSelector.node,
+		penalty:         capSelector.penalty,
+		lastRefreshTime: capSelector.lastRefreshTime,
+		os:              capSelector.os,
+		suspender:       capSelector.suspender,
+		warmPool:        warmPool,
+		coldPool:        coldPool,
 	}
 
-	c.requestSelectors[requestID] = requestSelector
+	c.requestSelectors[requestID] = &requestSelector
 
 	clog.Infof(ctx, "Created request selector for requestID=%s in %v", requestID, time.Since(start))
 
-	return capSelector, nil
-
+	return &requestSelector, nil
 }
