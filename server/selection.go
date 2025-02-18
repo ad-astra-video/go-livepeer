@@ -134,14 +134,17 @@ func (s *MinLSSelector) Complete(sess *BroadcastSession) {
 func (s *MinLSSelector) Select(ctx context.Context) *BroadcastSession {
 	sess := s.knownSessions.Peek()
 	if sess == nil {
+		clog.Infof(ctx, "selecting unknown session  knownSessions: %v unknownSessions: %v", s.knownSessions.Len(), len(s.unknownSessions))
 		return s.selectUnknownSession(ctx)
 	}
 
 	minSess := sess.(*BroadcastSession)
 	if minSess.LatencyScore > s.minLS && len(s.unknownSessions) > 0 {
+		clog.Infof(ctx, "selecting unknown session  knownSessions: %v unknownSessions: %v", s.knownSessions.Len(), len(s.unknownSessions))
 		return s.selectUnknownSession(ctx)
 	}
 
+	clog.Infof(ctx, "selected known session  knownSessions: %v unknownSessions: %v", s.knownSessions.Len(), len(s.unknownSessions))
 	return heap.Pop(s.knownSessions).(*BroadcastSession)
 }
 
