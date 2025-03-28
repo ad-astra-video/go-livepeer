@@ -349,7 +349,9 @@ func (m *DockerManager) createContainer(ctx context.Context, pipeline string, mo
 		return nil, err
 	}
 
-	containerHostPort := containerHostPorts[pipeline][:2] + portOffset(gpu)
+	// NOTE: We currently allow only one container per GPU for each pipeline.
+	gpuDevices := strings.Split(gpu, "|")
+	containerHostPort := containerHostPorts[pipeline][:2] + portOffset(gpuDevices[0])
 	containerName := dockerContainerName(pipeline, modelID, containerHostPort)
 	containerImage, err := m.getContainerImageName(pipeline, modelID)
 	if err != nil {
@@ -384,6 +386,7 @@ func (m *DockerManager) createContainer(ctx context.Context, pipeline string, mo
 		},
 	}
 
+	devReq := container.DeviceRequest{Driver: "nvidia", DeviceIDs: gpuDevices, Capabilities: [][]string{{"gpu"}}}
 	gpuOpts := opts.GpuOpts{}
 	if !isEmulatedGPU(hwGPU(gpu)) {
 		gpuOpts.Set("device=" + hwGPU(gpu))
@@ -399,7 +402,7 @@ func (m *DockerManager) createContainer(ctx context.Context, pipeline string, mo
 
 	hostConfig := &container.HostConfig{
 		Resources: container.Resources{
-			DeviceRequests: gpuOpts.Value(),
+			DeviceRequests: append(gpuOpts.Value(), devReq),
 		},
 		Mounts: []mount.Mount{
 			{
