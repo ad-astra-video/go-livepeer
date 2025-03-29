@@ -411,7 +411,7 @@ func (n *LivepeerNode) UpdateTranscoderSecret(secret string, active bool) {
 func (n *LivepeerNode) ResetNetworkCapabilities() {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	clear(n.NetworkCapabilities.Orchestrators)
+	n.NetworkCapabilities.Orchestrators = n.NetworkCapabilities.Orchestrators[:0]
 }
 
 func (n *LivepeerNode) AddNetworkCapabilities(orch *common.OrchNetworkCapabilities) error {
