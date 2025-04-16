@@ -608,9 +608,9 @@ func StartLivepeer(ctx context.Context, cfg LivepeerConfig) {
 			n.TranscoderManager = core.NewRemoteTranscoderManager()
 			n.Transcoder = n.TranscoderManager
 		}
-		if !*cfg.AIWorker {
-			n.AIWorkerManager = core.NewRemoteAIWorkerManager()
-		}
+
+		n.AIWorkerManager = core.NewRemoteAIWorkerManager()
+
 		if !*cfg.Transcoder || !*cfg.AIWorker {
 			//set up transcoder secrets
 			t_err := n.GetTranscoderSecrets()
@@ -1321,10 +1321,12 @@ func StartLivepeer(ctx context.Context, cfg LivepeerConfig) {
 					}
 				}
 
-				// Ensure the AI worker has the image needed to serve the job.
-				err := n.AIWorker.EnsureImageAvailable(ctx, config.Pipeline, config.ModelID)
-				if err != nil {
-					glog.Errorf("Error ensuring AI worker image available for %v: %v", config.Pipeline, err)
+				// for local runners, ensure the AI worker has the image needed to serve the job.
+				if config.URL == "" {
+					err := n.AIWorker.EnsureImageAvailable(ctx, config.Pipeline, config.ModelID)
+					if err != nil {
+						glog.Errorf("Error ensuring AI worker image available for %v: %v", config.Pipeline, err)
+					}
 				}
 
 				for i := 0; i < modelsCount; i++ {
