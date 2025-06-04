@@ -408,14 +408,17 @@ message NotifySegment {
 // Sent by the aiworker to register itself to the orchestrator.
 message RegisterAIWorkerRequest {
 
-  // Shared secret for auth
-  string secret = 1;
+    // Shared secret for auth
+    string secret = 1;
+    
+    // AIWorker capabilities
+    Capabilities capabilities = 2;
 
-  // AIWorker capabilities
-  Capabilities capabilities = 2;
+    // AIWorker hardware info
+    repeated HardwareInformation hardware = 3;
 
-  // AIWorker hardware info
-  repeated HardwareInformation hardware = 3;
+    // Worker capacity
+    int64 capacity = 4;
 }
 
 // Data included by the gateway when submitting a AI job.

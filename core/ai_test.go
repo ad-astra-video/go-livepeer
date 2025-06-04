@@ -49,7 +49,7 @@ func TestServeAIWorker(t *testing.T) {
 	// test that an ai worker was created
 	caps := createAIWorkerCapabilities()
 	netCaps := caps.ToNetCapabilities()
-	go n.serveAIWorker(strm, netCaps, nil)
+	go n.serveAIWorker(strm, 1, netCaps, nil)
 	time.Sleep(1 * time.Second)
 
 	wkr, ok := n.AIWorkerManager.liveAIWorkers[strm]
@@ -81,7 +81,7 @@ func TestServeAIWorker(t *testing.T) {
 	hdw := net.HardwareInformation{Pipeline: "livepeer-pipeline", ModelId: "livepeer/model1", GpuInfo: hdwInfo}
 	var netHdwList []*net.HardwareInformation
 	netHdwList = append(netHdwList, &hdw)
-	go n.serveAIWorker(strm1, netCaps, netHdwList)
+	go n.serveAIWorker(strm1, 1, netCaps, netHdwList)
 	time.Sleep(1 * time.Second)
 
 	wkr, ok = n.AIWorkerManager.liveAIWorkers[strm1]
@@ -116,7 +116,7 @@ func TestServeAIWorker_IncompatibleVersion(t *testing.T) {
 	// test that an ai worker was created
 	caps := createAIWorkerCapabilities()
 	netCaps := caps.ToNetCapabilities()
-	go n.serveAIWorker(strm, netCaps, nil)
+	go n.serveAIWorker(strm, 1, netCaps, nil)
 	time.Sleep(5 * time.Second)
 	assert.Zero(len(n.AIWorkerManager.liveAIWorkers))
 	assert.Zero(len(n.AIWorkerManager.remoteAIWorkers))
@@ -128,14 +128,14 @@ func TestRemoteAIWorkerManager(t *testing.T) {
 	initAIWorker := func() (*RemoteAIWorker, *StubAIWorkerServer) {
 		strm := &StubAIWorkerServer{manager: m}
 		caps := createAIWorkerCapabilities()
-		wkr := NewRemoteAIWorker(m, strm, caps, nil)
+		wkr := NewRemoteAIWorker(m, strm, 1, caps, nil)
 		return wkr, strm
 	}
 	//create worker and connect to manager
 	wkr, strm := initAIWorker()
 
 	go func() {
-		m.Manage(strm, wkr.capabilities.ToNetCapabilities(), nil)
+		m.Manage(strm, 1, wkr.capabilities.ToNetCapabilities(), nil)
 	}()
 	time.Sleep(1 * time.Millisecond) // allow the workers to activate
 
@@ -196,9 +196,9 @@ func TestSelectAIWorker(t *testing.T) {
 
 	// register ai workers, which adds ai worker to liveAIWorkers and remoteAIWorkers
 	wg := newWg(1)
-	go func() { m.Manage(strm, capabilities.ToNetCapabilities(), nil) }()
+	go func() { m.Manage(strm, 1, capabilities.ToNetCapabilities(), nil) }()
 	time.Sleep(1 * time.Millisecond) // allow time for first stream to register
-	go func() { m.Manage(strm2, extraModelCapabilities.ToNetCapabilities(), nil); wg.Done() }()
+	go func() { m.Manage(strm2, 1, extraModelCapabilities.ToNetCapabilities(), nil); wg.Done() }()
 	time.Sleep(1 * time.Millisecond) // allow time for second stream to register e for third stream to register
 
 	//update worker.addr to be different
@@ -296,7 +296,7 @@ func TestSelectAIWorker(t *testing.T) {
 	assert.EqualError(err, ErrNoCompatibleWorkersAvailable.Error())
 
 	// reconnect worker and check pipeline only on second worker is available
-	go func() { m.Manage(strm2, extraModelCapabilities.ToNetCapabilities(), nil); wg.Done() }()
+	go func() { m.Manage(strm2, 1, extraModelCapabilities.ToNetCapabilities(), nil); wg.Done() }()
 	time.Sleep(1 * time.Millisecond)
 	w, err = m.selectWorker(testRequestId, "image-to-image", "livepeer/model2")
 	assert.NotNil(w)
@@ -320,7 +320,7 @@ func TestManageAIWorkers(t *testing.T) {
 
 	// test that transcoder is added to liveTranscoders and remoteTranscoders
 	wg1 := newWg(1)
-	go func() { m.Manage(strm, capabilities.ToNetCapabilities(), nil); wg1.Done() }()
+	go func() { m.Manage(strm, 1, capabilities.ToNetCapabilities(), nil); wg1.Done() }()
 	time.Sleep(1 * time.Millisecond) // allow the manager to activate
 
 	assert.NotNil(m.liveAIWorkers[strm])
@@ -331,7 +331,7 @@ func TestManageAIWorkers(t *testing.T) {
 
 	// test that additional transcoder is added to liveTranscoders and remoteTranscoders
 	wg2 := newWg(1)
-	go func() { m.Manage(strm2, capabilities.ToNetCapabilities(), nil); wg2.Done() }()
+	go func() { m.Manage(strm2, 1, capabilities.ToNetCapabilities(), nil); wg2.Done() }()
 	time.Sleep(1 * time.Millisecond) // allow the manager to activate
 
 	assert.NotNil(m.liveAIWorkers[strm])
@@ -361,7 +361,7 @@ func TestRemoteAIWorkerTimeout(t *testing.T) {
 		strm := &StubAIWorkerServer{manager: m}
 		//create capabilities and constraints the ai worker sends to orch
 		caps := createAIWorkerCapabilities()
-		wkr := NewRemoteAIWorker(m, strm, caps, nil)
+		wkr := NewRemoteAIWorker(m, strm, 1, caps, nil)
 		return wkr, strm
 	}
 	//create a new worker
@@ -524,14 +524,14 @@ func TestCheckAICapacity(t *testing.T) {
 	initAIWorker := func() (*RemoteAIWorker, *StubAIWorkerServer) {
 		strm := &StubAIWorkerServer{manager: o.node.AIWorkerManager}
 		caps := createAIWorkerCapabilities()
-		wkr := NewRemoteAIWorker(o.node.AIWorkerManager, strm, caps, nil)
+		wkr := NewRemoteAIWorker(o.node.AIWorkerManager, strm, 1, caps, nil)
 		return wkr, strm
 	}
 	//create worker and connect to manager
 	wkr2, strm := initAIWorker()
 
 	go func() {
-		o.node.AIWorkerManager.Manage(strm, wkr2.capabilities.ToNetCapabilities(), nil)
+		o.node.AIWorkerManager.Manage(strm, 1, wkr2.capabilities.ToNetCapabilities(), nil)
 	}()
 	time.Sleep(1 * time.Millisecond) // allow the workers to activate
 
@@ -557,12 +557,12 @@ func TestRemoteAIWorkerProcessPipelines(t *testing.T) {
 	initAIWorker := func() (*RemoteAIWorker, *StubAIWorkerServer) {
 		strm := &StubAIWorkerServer{manager: o.node.AIWorkerManager}
 		caps := createAIWorkerCapabilities()
-		wkr := NewRemoteAIWorker(o.node.AIWorkerManager, strm, caps, nil)
+		wkr := NewRemoteAIWorker(o.node.AIWorkerManager, strm, 1, caps, nil)
 		return wkr, strm
 	}
 	//create worker and connect to manager
 	wkr, strm := initAIWorker()
-	go o.node.serveAIWorker(strm, wkr.capabilities.ToNetCapabilities(), nil)
+	go o.node.serveAIWorker(strm, 1, wkr.capabilities.ToNetCapabilities(), nil)
 	time.Sleep(5 * time.Millisecond) // allow the workers to activate
 
 	//check workers connected

@@ -254,7 +254,7 @@ func (r *stubOrchestrator) GetStorageForRequest(requestID string) (drivers.OSSes
 func (r *stubOrchestrator) WorkerHardware() []worker.HardwareInformation {
 	return []worker.HardwareInformation{}
 }
-func (r *stubOrchestrator) ServeAIWorker(stream net.AIWorker_RegisterAIWorkerServer, capabilities *net.Capabilities, hardware []*net.HardwareInformation) {
+func (r *stubOrchestrator) ServeAIWorker(stream net.AIWorker_RegisterAIWorkerServer, capacity int, capabilities *net.Capabilities, hardware []*net.HardwareInformation) {
 }
 func (r *stubOrchestrator) RegisterExternalCapability(extCapabilitySettings string) (*core.ExternalCapability, error) {
 	return nil, nil
@@ -1528,7 +1528,7 @@ func (r *mockOrchestrator) GetStorageForRequest(requestID string) (drivers.OSSes
 func (r *mockOrchestrator) WorkerHardware() []worker.HardwareInformation {
 	return []worker.HardwareInformation{}
 }
-func (r *mockOrchestrator) ServeAIWorker(stream net.AIWorker_RegisterAIWorkerServer, capabilities *net.Capabilities, hardware []*net.HardwareInformation) {
+func (r *mockOrchestrator) ServeAIWorker(stream net.AIWorker_RegisterAIWorkerServer, capacity int, capabilities *net.Capabilities, hardware []*net.HardwareInformation) {
 }
 func (o *mockOrchestrator) RegisterExternalCapability(extCapabilitySettings string) (*core.ExternalCapability, error) {
 	return nil, nil

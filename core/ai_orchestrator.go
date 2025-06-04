@@ -44,6 +44,8 @@ type RemoteAIWorker struct {
 	version      []worker.Version
 	eof          chan struct{}
 	addr         string
+	capacity     int
+	load         int
 }
 
 func (rw *RemoteAIWorker) done() {
@@ -70,12 +72,13 @@ type RemoteAIWorkerManager struct {
 	workerSecrets map[string]bool
 }
 
-func NewRemoteAIWorker(m *RemoteAIWorkerManager, stream net.AIWorker_RegisterAIWorkerServer, caps *Capabilities, hardware []worker.HardwareInformation) *RemoteAIWorker {
+func NewRemoteAIWorker(m *RemoteAIWorkerManager, stream net.AIWorker_RegisterAIWorkerServer, capacity int, caps *Capabilities, hardware []worker.HardwareInformation) *RemoteAIWorker {
 	return &RemoteAIWorker{
 		manager:      m,
 		stream:       stream,
 		eof:          make(chan struct{}, 1),
 		addr:         common.GetConnectionAddr(stream.Context()),
+		capacity:     capacity,
 		capabilities: caps,
 		hardware:     hardware,
 	}
@@ -96,11 +99,11 @@ func NewRemoteAIWorkerManager() *RemoteAIWorkerManager {
 	}
 }
 
-func (orch *orchestrator) ServeAIWorker(stream net.AIWorker_RegisterAIWorkerServer, capabilities *net.Capabilities, hardware []*net.HardwareInformation) {
-	orch.node.serveAIWorker(stream, capabilities, hardware)
+func (orch *orchestrator) ServeAIWorker(stream net.AIWorker_RegisterAIWorkerServer, capacity int, capabilities *net.Capabilities, hardware []*net.HardwareInformation) {
+	orch.node.serveAIWorker(stream, capacity, capabilities, hardware)
 }
 
-func (n *LivepeerNode) serveAIWorker(stream net.AIWorker_RegisterAIWorkerServer, capabilities *net.Capabilities, hardware []*net.HardwareInformation) {
+func (n *LivepeerNode) serveAIWorker(stream net.AIWorker_RegisterAIWorkerServer, capacity int, capabilities *net.Capabilities, hardware []*net.HardwareInformation) {
 	from := common.GetConnectionAddr(stream.Context())
 	wkrCaps := CapabilitiesFromNetCapabilities(capabilities)
 	wkrHdw := hardwareInformationFromNetHardware(hardware)
@@ -112,7 +115,7 @@ func (n *LivepeerNode) serveAIWorker(stream net.AIWorker_RegisterAIWorkerServer,
 		defer n.RemoveAICapabilities(wkrCaps)
 
 		// Manage blocks while AI worker is connected
-		n.AIWorkerManager.Manage(stream, capabilities, wkrHdw)
+		n.AIWorkerManager.Manage(stream, capacity, capabilities, wkrHdw)
 		glog.V(common.DEBUG).Infof("Closing aiworker=%s channel", from)
 	} else {
 		glog.Errorf("worker %s not connected, version not compatible", from)
@@ -120,10 +123,10 @@ func (n *LivepeerNode) serveAIWorker(stream net.AIWorker_RegisterAIWorkerServer,
 }
 
 // Manage adds aiworker to list of live aiworkers. Doesn't return until aiworker disconnects
-func (rwm *RemoteAIWorkerManager) Manage(stream net.AIWorker_RegisterAIWorkerServer, capabilities *net.Capabilities, hardware []worker.HardwareInformation) {
+func (rwm *RemoteAIWorkerManager) Manage(stream net.AIWorker_RegisterAIWorkerServer, capacity int, capabilities *net.Capabilities, hardware []worker.HardwareInformation) {
 	from := common.GetConnectionAddr(stream.Context())
 
-	aiworker := NewRemoteAIWorker(rwm, stream, CapabilitiesFromNetCapabilities(capabilities), hardware)
+	aiworker := NewRemoteAIWorker(rwm, stream, capacity, CapabilitiesFromNetCapabilities(capabilities), hardware)
 	go func() {
 		ctx := stream.Context()
 		<-ctx.Done()
@@ -169,6 +172,7 @@ func NewRemoteAIWorkerFatalError(err error) error {
 // Process does actual AI job using remote worker from the pool
 func (rwm *RemoteAIWorkerManager) Process(ctx context.Context, requestID string, pipeline string, modelID string, fname string, req AIJobRequestData) (*RemoteAIWorkerResult, error) {
 	worker, err := rwm.selectWorker(requestID, pipeline, modelID)
+
 	if err != nil {
 		return nil, err
 	}
@@ -200,13 +204,16 @@ func (rwm *RemoteAIWorkerManager) selectWorker(requestID string, pipeline string
 	findCompatibleWorker := func(rwm *RemoteAIWorkerManager) int {
 		cap, _ := PipelineToCapability(pipeline)
 		for idx, worker := range rwm.remoteAIWorkers {
-			rwCap, hasCap := worker.capabilities.constraints.perCapability[cap]
-			if hasCap {
-				_, hasModel := rwCap.Models[modelID]
-				if hasModel {
-					if rwCap.Models[modelID].Capacity > 0 {
-						rwm.remoteAIWorkers[idx].capabilities.constraints.perCapability[cap].Models[modelID].Capacity -= 1
-						return idx
+			if worker.load < worker.capacity {
+				rwCap, hasCap := worker.capabilities.constraints.perCapability[cap]
+				if hasCap {
+					_, hasModel := rwCap.Models[modelID]
+					if hasModel {
+						if rwCap.Models[modelID].Capacity > 0 {
+							rwm.remoteAIWorkers[idx].capabilities.constraints.perCapability[cap].Models[modelID].Capacity -= 1
+							worker.load++
+							return idx
+						}
 					}
 				}
 			}
@@ -250,12 +257,14 @@ func (rwm *RemoteAIWorkerManager) workerHasCapacity(pipeline, modelID string) bo
 		return false
 	}
 	for _, worker := range rwm.remoteAIWorkers {
-		rw, hasCap := worker.capabilities.constraints.perCapability[cap]
-		if hasCap {
-			_, hasModel := rw.Models[modelID]
-			if hasModel {
-				if rw.Models[modelID].Capacity > 0 {
-					return true
+		if worker.load < worker.capacity {
+			rw, hasCap := worker.capabilities.constraints.perCapability[cap]
+			if hasCap {
+				_, hasModel := rw.Models[modelID]
+				if hasModel {
+					if rw.Models[modelID].Capacity > 0 {
+						return true
+					}
 				}
 			}
 		}
@@ -277,6 +286,7 @@ func (rwm *RemoteAIWorkerManager) completeAIRequest(requestID, pipeline, modelID
 
 	for idx, remoteWorker := range rwm.remoteAIWorkers {
 		if worker.addr == remoteWorker.addr {
+			worker.load--
 			cap, err := PipelineToCapability(pipeline)
 			if err == nil {
 				if _, hasCap := rwm.remoteAIWorkers[idx].capabilities.constraints.perCapability[cap]; hasCap {
@@ -284,7 +294,6 @@ func (rwm *RemoteAIWorkerManager) completeAIRequest(requestID, pipeline, modelID
 						rwm.remoteAIWorkers[idx].capabilities.constraints.perCapability[cap].Models[modelID].Capacity += 1
 					}
 				}
-
 			}
 		}
 	}
