@@ -83,6 +83,9 @@ func (orch *orchestrator) VerifySig(addr ethcommon.Address, msg string, sig []by
 func (orch *orchestrator) Address() ethcommon.Address {
 	return orch.address
 }
+func (orch *orchestrator) TranscoderSecret() string {
+	return orch.node.OrchSecret
+}
 
 func (rtm *RemoteTranscoderManager) CheckTranscoderSecret(secret string) (bool, bool) {
 	is_active, ok := rtm.transcoderSecrets[secret]
