@@ -307,15 +307,13 @@ func (h *lphttp) ProcessWorkerWHIP(w http.ResponseWriter, r *http.Request) {
 	stream.WorkerCancelStream = cancel
 	stream.WorkerAddStreamWhep = addWhep
 
-	_, whipAnswer, status_code, err := relay.createWHIPSession(body, r.Header.Get("Content-Type"), streamID)
+	_, whipAnswer, status_code, err := relay.createWHIPSession(body, r.Header.Get("Content-Type"), streamID, "worker")
 
 	if err != nil {
 		clog.Errorf(ctx, "Error creating WHIP session err=%v", err)
 		http.Error(w, fmt.Sprintf("Error creating WHIP session err=%v", err), status_code)
 		return
 	}
-	// Store session information
-	go relay.Start()
 
 	clog.Infof(ctx, "Worker WHIP session created for stream %s", streamID)
 	// Set response headers
@@ -351,8 +349,8 @@ func (h *lphttp) ProcessWorkerWHEP(w http.ResponseWriter, r *http.Request) {
 	}
 	// Create WHEP session for results from worker
 	var answer string
-	if fn, ok := stream.AddStreamWhep.(func([]byte, string, string) (string, int, error)); ok {
-		whepAnswer, statusCode, err := fn(body, r.Header.Get("Content-Type"), streamID)
+	if fn, ok := stream.AddStreamWhep.(func([]byte, string, string, string) (string, int, error)); ok {
+		whepAnswer, statusCode, err := fn(body, r.Header.Get("Content-Type"), streamID, "source")
 		if err != nil {
 			clog.Errorf(ctx, "Error creating WHEP session err=%v", err)
 			http.Error(w, fmt.Sprintf("Error creating WHEP session err=%v", err), statusCode)
@@ -731,7 +729,7 @@ func processJob(ctx context.Context, h *lphttp, w http.ResponseWriter, r *http.R
 
 		streamCtx, cancel := context.WithCancel(context.Background())
 		relay, addWhep := NewRelayServer(streamCtx)
-		_, whipAnswer, status_code, err := relay.createWHIPSession(body, r.Header.Get("Content-Type"), jobReqDetails.StreamID)
+		_, whipAnswer, status_code, err := relay.createWHIPSession(body, r.Header.Get("Content-Type"), jobReqDetails.StreamID, "source")
 
 		if err != nil {
 			clog.Errorf(ctx, "Error creating WHIP session err=%v", err)
@@ -763,8 +761,8 @@ func processJob(ctx context.Context, h *lphttp, w http.ResponseWriter, r *http.R
 		}
 
 		var answer string
-		if fn, ok := stream.WorkerAddStreamWhep.(func([]byte, string, string) (string, int, error)); ok {
-			whepAnswer, statusCode, err := fn(body, r.Header.Get("Content-Type"), jobReqDetails.StreamID)
+		if fn, ok := stream.WorkerAddStreamWhep.(func([]byte, string, string, string) (string, int, error)); ok {
+			whepAnswer, statusCode, err := fn(body, r.Header.Get("Content-Type"), jobReqDetails.StreamID, "result")
 			if err != nil {
 				clog.Errorf(ctx, "Error creating WHEP session err=%v", err)
 				http.Error(w, fmt.Sprintf("Error creating WHEP session err=%v", err), statusCode)

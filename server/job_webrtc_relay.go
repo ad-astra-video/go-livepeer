@@ -29,12 +29,12 @@ type WHIPSession struct {
 
 // WHEPSession represents a WHEP egress session
 type WHEPSession struct {
-	ID         string
-	PeerConn   *webrtc.PeerConnection
-	Tracks     map[string]*webrtc.TrackLocalStaticRTP
-	mu         sync.RWMutex
-	Created    time.Time
-	LastUpdate time.Time
+	ID          string
+	PeerConn    *webrtc.PeerConnection
+	LocalTracks map[string]*webrtc.TrackLocalStaticRTP // Changed from Transceivers
+	mu          sync.RWMutex
+	Created     time.Time
+	LastUpdate  time.Time
 }
 
 // RelayServer manages WHIP/WHEP connections and media relay
@@ -58,7 +58,7 @@ type RelayStats struct {
 	mu                 sync.RWMutex
 }
 
-func NewRelayServer(ctx context.Context) (*RelayServer, func([]byte, string, string) (string, int, error)) {
+func NewRelayServer(ctx context.Context) (*RelayServer, func([]byte, string, string, string) (string, int, error)) {
 	rs := &RelayServer{
 		ctx:        ctx,
 		ingress:    &WHIPSession{},
@@ -90,35 +90,7 @@ func (rs *RelayServer) Start() {
 	}
 }
 
-// Sample audio transformation (echo effect)
-//func (rs *RelayServer) transformAudio(data []byte) []byte {
-//	transformed := make([]byte, len(data))
-//	copy(transformed, data)
-//
-//	// Add simple processing (volume adjustment)
-//	for i := range transformed {
-//		if i < len(data) {
-//			transformed[i] = byte(float64(data[i]) * 0.8) // Reduce volume
-//		}
-//	}
-//	return transformed
-//}
-
-// Sample video transformation (brightness adjustment)
-//func (rs *RelayServer) transformVideo(data []byte) []byte {
-//	transformed := make([]byte, len(data))
-//	copy(transformed, data)
-//
-//	// Apply basic brightness adjustment
-//	for i := range transformed {
-//		if transformed[i] < 255-30 {
-//			transformed[i] += 30 // Increase brightness
-//		}
-//	}
-//	return transformed
-//}
-
-func (rs *RelayServer) createWHIPSession(body []byte, contentType string, streamID string) (string, string, int, error) {
+func (rs *RelayServer) createWHIPSession(body []byte, contentType string, streamID string, sessionType string) (string, string, int, error) {
 	// Validate Content-Type
 	if contentType != "application/sdp" {
 		return "", "", http.StatusBadRequest, errors.New("Content-Type must be application/sdp")
@@ -147,7 +119,7 @@ func (rs *RelayServer) createWHIPSession(body []byte, contentType string, stream
 	})
 
 	// Generate session ID
-	sessionID := streamID
+	sessionID := streamID + "-" + sessionType
 
 	session := &WHIPSession{
 		ID:         sessionID,
@@ -165,13 +137,16 @@ func (rs *RelayServer) createWHIPSession(body []byte, contentType string, stream
 		session.Tracks[track.Kind().String()] = track
 		session.mu.Unlock()
 
+		// Create local tracks for existing WHEP sessions when new tracks arrive
+		rs.createLocalTracksForExistingWHEPSessions(track)
+
 		// Start relaying and transforming this track
 		go rs.relayAndTransformTrack(sessionID, track, "whip")
 	})
 
 	// Handle connection state changes
 	peerConn.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
-		log.Printf("WHIP Session %s: Connection state changed to %s", sessionID, state.String())
+		glog.Infof("WHIP Session %s: Connection state changed to %s", sessionID, state.String())
 		if state == webrtc.PeerConnectionStateClosed || state == webrtc.PeerConnectionStateFailed {
 			rs.cleanupWHIPSession()
 		}
@@ -202,6 +177,8 @@ func (rs *RelayServer) createWHIPSession(body []byte, contentType string, stream
 	}
 	// Wait for ICE gathering if you want the full candidate set in the SDP
 	<-gatherComplete
+	//set the full answer after ICE candidates
+	answer = *peerConn.LocalDescription()
 
 	// Store session
 	rs.mu.Lock()
@@ -213,7 +190,7 @@ func (rs *RelayServer) createWHIPSession(body []byte, contentType string, stream
 	return sessionID, answer.SDP, http.StatusCreated, nil
 }
 
-func (rs *RelayServer) createWHEPSession(body []byte, contentType string, streamID string) (string, int, error) {
+func (rs *RelayServer) createWHEPSession(body []byte, contentType string, streamID string, sessionType string) (string, int, error) {
 	if contentType != "application/sdp" {
 		return "", http.StatusBadRequest, errors.New("Content-Type must be application/sdp")
 	}
@@ -244,18 +221,19 @@ func (rs *RelayServer) createWHEPSession(body []byte, contentType string, stream
 	sessionID := streamID
 
 	session := &WHEPSession{
-		ID:         sessionID,
-		PeerConn:   peerConn,
-		Tracks:     make(map[string]*webrtc.TrackLocalStaticRTP),
-		Created:    time.Now(),
-		LastUpdate: time.Now(),
+		ID:          sessionID,
+		PeerConn:    peerConn,
+		LocalTracks: make(map[string]*webrtc.TrackLocalStaticRTP), // Initialize LocalTracks
+		Created:     time.Now(),
+		LastUpdate:  time.Now(),
 	}
 
-	// Create and add tracks for available media
+	// Create and add tracks for available media from ingress
 	err = rs.addTracksToWHEPSession(session)
 	if err != nil {
 		return "", http.StatusInternalServerError, errors.New(fmt.Sprintf("Failed to add tracks to WHEP session: %v", err))
 	}
+
 	// Handle connection state changes
 	peerConn.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
 		log.Printf("WHEP Session %s: Connection state changed to %s", sessionID, state.String())
@@ -289,6 +267,8 @@ func (rs *RelayServer) createWHEPSession(body []byte, contentType string, stream
 	}
 	// Wait for ICE gathering if you want the full candidate set in the SDP
 	<-gatherComplete
+	//set the full answer after ICE candidates
+	answer = *peerConn.LocalDescription()
 
 	// Store session
 	rs.mu.Lock()
@@ -298,29 +278,152 @@ func (rs *RelayServer) createWHEPSession(body []byte, contentType string, stream
 	log.Printf("Created WHEP session: %s", sessionID)
 
 	return answer.SDP, http.StatusCreated, nil
-
 }
 
+// Updated to create TrackLocalStaticRTP tracks based on ingress tracks
 func (rs *RelayServer) addTracksToWHEPSession(session *WHEPSession) error {
-	// Add generic audio transceiver (recvonly)
-	_, err := session.PeerConn.AddTransceiverFromKind(
-		webrtc.RTPCodecTypeAudio,
-		webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionRecvonly},
-	)
-	if err != nil {
-		return fmt.Errorf("failed to add audio transceiver: %v", err)
+	rs.mu.RLock()
+	ingressTracks := rs.ingress.Tracks
+	rs.mu.RUnlock()
+
+	// If we have ingress tracks, create matching local tracks
+	for trackKind, remoteTrack := range ingressTracks {
+		err := rs.createLocalTrackForWHEPSession(session, trackKind, remoteTrack)
+		if err != nil {
+			return fmt.Errorf("failed to create local track for %s: %v", trackKind, err)
+		}
 	}
 
-	// Add generic video transceiver (recvonly)
-	_, err = session.PeerConn.AddTransceiverFromKind(
-		webrtc.RTPCodecTypeVideo,
-		webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionRecvonly},
-	)
-	if err != nil {
-		return fmt.Errorf("failed to add video transceiver: %v", err)
+	// If no ingress tracks yet, create generic tracks
+	if len(ingressTracks) == 0 {
+		// Create generic audio track
+		err := rs.createGenericLocalTrack(session, webrtc.RTPCodecTypeAudio)
+		if err != nil {
+			return fmt.Errorf("failed to create generic audio track: %v", err)
+		}
+
+		// Create generic video track
+		err = rs.createGenericLocalTrack(session, webrtc.RTPCodecTypeVideo)
+		if err != nil {
+			return fmt.Errorf("failed to create generic video track: %v", err)
+		}
 	}
 
 	return nil
+}
+
+// Create a local track based on remote track information
+func (rs *RelayServer) createLocalTrackForWHEPSession(session *WHEPSession, trackKind string, remoteTrack *webrtc.TrackRemote) error {
+	// Get codec information from the remote track
+	codec := remoteTrack.Codec()
+
+	localTrack, err := webrtc.NewTrackLocalStaticRTP(
+		codec.RTPCodecCapability,
+		trackKind,
+		fmt.Sprintf("relay-%s", session.ID),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create local track: %v", err)
+	}
+
+	// Add track to peer connection
+	_, err = session.PeerConn.AddTrack(localTrack)
+	if err != nil {
+		return fmt.Errorf("failed to add track to peer connection: %v", err)
+	}
+
+	// Store the local track
+	session.LocalTracks[trackKind] = localTrack
+
+	log.Printf("Created local track for WHEP session %s: %s (%s)", session.ID, trackKind, codec.MimeType)
+	return nil
+}
+
+// Create generic local tracks when no ingress is available
+func (rs *RelayServer) createGenericLocalTrack(session *WHEPSession, codecType webrtc.RTPCodecType) error {
+	var capability webrtc.RTPCodecCapability
+	var trackKind string
+
+	switch codecType {
+	case webrtc.RTPCodecTypeAudio:
+		capability = webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus}
+		trackKind = "audio"
+	case webrtc.RTPCodecTypeVideo:
+		capability = webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeVP8}
+		trackKind = "video"
+	default:
+		return fmt.Errorf("unsupported codec type: %v", codecType)
+	}
+
+	localTrack, err := webrtc.NewTrackLocalStaticRTP(
+		capability,
+		trackKind,
+		fmt.Sprintf("relay-%s", session.ID),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create local track: %v", err)
+	}
+
+	// Add track to peer connection
+	_, err = session.PeerConn.AddTrack(localTrack)
+	if err != nil {
+		return fmt.Errorf("failed to add track to peer connection: %v", err)
+	}
+
+	// Store the local track
+	session.LocalTracks[trackKind] = localTrack
+
+	log.Printf("Created generic local track for WHEP session %s: %s (%s)", session.ID, trackKind, capability.MimeType)
+	return nil
+}
+
+// Create local tracks for existing WHEP sessions when new ingress tracks arrive
+func (rs *RelayServer) createLocalTracksForExistingWHEPSessions(remoteTrack *webrtc.TrackRemote) {
+	trackKind := remoteTrack.Kind().String()
+
+	rs.mu.RLock()
+	sessions := make([]*WHEPSession, len(rs.egress))
+	copy(sessions, rs.egress)
+	rs.mu.RUnlock()
+
+	for _, session := range sessions {
+		session.mu.Lock()
+		// Check if we already have this track type
+		if _, exists := session.LocalTracks[trackKind]; !exists {
+			err := rs.createLocalTrackForWHEPSession(session, trackKind, remoteTrack)
+			if err != nil {
+				log.Printf("Failed to create local track for existing WHEP session %s: %v", session.ID, err)
+			}
+		}
+		session.mu.Unlock()
+	}
+}
+
+// Updated relay function to use TrackLocalStaticRTP
+func (rs *RelayServer) relayToWHEPSessions(rtp *rtp.Packet, trackKind string) {
+	rs.mu.RLock()
+	sessions := make([]*WHEPSession, len(rs.egress))
+	copy(sessions, rs.egress)
+	rs.mu.RUnlock()
+
+	for _, session := range sessions {
+		session.mu.RLock()
+		if localTrack, exists := session.LocalTracks[trackKind]; exists {
+			err := localTrack.WriteRTP(rtp)
+			if err != nil {
+				log.Printf("Error writing RTP to WHEP session %s: %v", session.ID, err)
+			} else {
+				rs.stats.mu.Lock()
+				rs.stats.PacketsTransmitted++
+				rs.stats.BytesTransmitted += int64(len(rtp.Payload))
+				rs.stats.mu.Unlock()
+				//glog.V(2).Infof("Relayed RTP packet to WHEP session %s, track %s", session.ID, trackKind)
+			}
+		} else {
+			log.Printf("Local track %s not found in WHEP session %s", trackKind, session.ID)
+		}
+		session.mu.RUnlock()
+	}
 }
 
 func (rs *RelayServer) updateWHIPSession(w http.ResponseWriter, r *http.Request) {
@@ -452,14 +555,14 @@ func (rs *RelayServer) cleanupWHEPSession(sessionID string) {
 }
 
 func (rs *RelayServer) relayAndTransformTrack(sessionID string, track *webrtc.TrackRemote, sessionType string) {
-	log.Printf("Starting relay and transform for track %s from %s session %s", track.Kind().String(), sessionType, sessionID)
+	glog.Infof("Starting relay and transform for track %s from %s session %s", track.Kind().String(), sessionType, sessionID)
 
 	trackKind := track.Kind().String()
 
 	// Read and process RTP packets
 	for {
 		rtp, _, err := track.ReadRTP()
-		glog.Infof("Reading RTP packet for track %s from %s session %s", trackKind, sessionType, sessionID)
+		//glog.Infof("Reading RTP packet for track %s from %s session %s", trackKind, sessionType, sessionID)
 		if err != nil {
 			if err == io.EOF {
 				log.Printf("Track %s from %s session %s ended", trackKind, sessionType, sessionID)
@@ -475,39 +578,11 @@ func (rs *RelayServer) relayAndTransformTrack(sessionID string, track *webrtc.Tr
 		}
 
 		// Update stats
-		rs.stats.mu.Lock()
 		rs.stats.PacketsReceived++
 		rs.stats.BytesReceived += int64(len(rtp.Payload))
-		rs.stats.mu.Unlock()
 
 		// Relay to all WHEP sessions
 		rs.relayToWHEPSessions(rtp, trackKind)
-	}
-}
-
-func (rs *RelayServer) relayToWHEPSessions(rtp *rtp.Packet, trackKind string) {
-	rs.mu.RLock()
-	sessions := make([]*WHEPSession, 0, len(rs.egress))
-	for _, session := range rs.egress {
-		sessions = append(sessions, session)
-	}
-	rs.mu.RUnlock()
-
-	for _, session := range sessions {
-		session.mu.RLock()
-		if track, exists := session.Tracks[trackKind]; exists {
-			err := track.WriteRTP(rtp)
-			glog.Infof("Relaying RTP packet to WHEP session %s, track %s", session.ID, trackKind)
-			if err != nil {
-				log.Printf("Error writing RTP to WHEP session %s: %v", session.ID, err)
-			} else {
-				rs.stats.mu.Lock()
-				rs.stats.PacketsTransmitted++
-				rs.stats.BytesTransmitted += int64(len(rtp.Payload))
-				rs.stats.mu.Unlock()
-			}
-		}
-		session.mu.RUnlock()
 	}
 }
 
@@ -546,12 +621,12 @@ func (rs *RelayServer) handleSessions(w http.ResponseWriter, r *http.Request) {
 	sessions["whip_sessions"] = rs.ingress
 
 	// Add WHEP sessions
-	for id, session := range rs.egress {
+	for _, session := range rs.egress {
 		sessionInfo := map[string]interface{}{
-			"id":          id,
+			"id":          session.ID,
 			"created":     session.Created,
 			"last_update": session.LastUpdate,
-			"tracks":      len(session.Tracks),
+			"tracks":      len(session.LocalTracks), // Updated to use LocalTracks
 		}
 		sessions["whep_sessions"] = append(sessions["whep_sessions"].([]map[string]interface{}), sessionInfo)
 	}
@@ -582,18 +657,20 @@ func (rs *RelayServer) cleanupStaleSessions() {
 		if rs.ingress.PeerConn != nil {
 			rs.ingress.PeerConn.Close()
 		}
-		rs.ingress = nil
+		rs.ingress = &WHIPSession{} // Reset instead of nil
 	}
 
 	// Cleanup stale WHEP sessions
-	for id, session := range rs.egress {
+	validSessions := make([]*WHEPSession, 0)
+	for _, session := range rs.egress {
 		if session.LastUpdate.Before(cutoff) {
-			log.Printf("Cleaning up stale WHEP session: %s", id)
+			log.Printf("Cleaning up stale WHEP session: %s", session.ID)
 			if session.PeerConn != nil {
 				session.PeerConn.Close()
 			}
-			session = nil
+		} else {
+			validSessions = append(validSessions, session)
 		}
 	}
-	rs.egress = []*WHEPSession{}
+	rs.egress = validSessions
 }
