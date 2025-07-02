@@ -255,6 +255,8 @@ func StartTranscodeServer(orch Orchestrator, bind string, mux *http.ServeMux, wo
 	lp.transRPC.HandleFunc("/capability/unregister", lp.UnregisterCapability)
 	lp.transRPC.HandleFunc("/process/worker/whip", lp.ProcessWorkerWHIP)
 	lp.transRPC.HandleFunc("/process/worker/whep", lp.ProcessWorkerWHEP)
+	lp.transRPC.HandleFunc("/process/stream/whip/", lp.ProcessRequestWHIPUpdate)
+	lp.transRPC.HandleFunc("/process/stream/whep/", lp.ProcessRequestWHEPUpdate)
 
 	cert, key, err := getCert(orch.ServiceURI(), workDir)
 	if err != nil {

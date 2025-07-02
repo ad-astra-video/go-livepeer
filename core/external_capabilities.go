@@ -37,19 +37,19 @@ type StreamData struct {
 	StreamID   string
 	Capability string
 	//Gateway fields
-	CurrentOrchUrl string
-	OrchUrls       []string
-	ExcludeOrchs   []string
-	OrchToken      interface{}
+	OrchUrl      string
+	ExcludeOrchs []string
 
 	//Orchestrator fields
-	StreamCtx           context.Context
-	CancelStream        context.CancelFunc
-	AddStreamWhep       interface{}
-	WorkerStreamCtx     context.Context
-	WorkerCancelStream  context.CancelFunc
-	WorkerAddStreamWhep interface{}
-	Sender              ethcommon.Address
+	Sender ethcommon.Address
+	//source stream
+	StreamCtx         context.Context
+	CancelStream      context.CancelFunc
+	StreamRelayServer interface{}
+	//result stream
+	WorkerStreamCtx    context.Context
+	WorkerCancelStream context.CancelFunc
+	WorkerRelayServer  interface{}
 }
 
 func NewExternalCapabilities() *ExternalCapabilities {

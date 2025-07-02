@@ -76,7 +76,6 @@ type JobRequest struct {
 type JobRequestDetails struct {
 	StartStream       bool   `json:"start_stream,omitempty"`
 	StartStreamOutput bool   `json:"start_stream_output,omitempty"`
-	UpdateStream      bool   `json:"update_stream,omitempty"`
 	StopStream        bool   `json:"stop_stream,omitempty"` //if true, the stream will be stopped and removed from the orchestrator
 	StreamID          string `json:"stream_id,omitempty"`
 }
@@ -279,8 +278,273 @@ func (ls *LivepeerServer) SubmitJob() http.Handler {
 	})
 }
 
+// ProcessRequestWHIPUpdate processes a WHIP update request for a source stream (can be update and delete)
+// Gateway forwards to the Orchestrator serving the stream
+func (ls *LivepeerServer) ProcessRequestWHIPUpdate(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	sessionID := strings.TrimPrefix(r.URL.Path, "/process/stream/whip/")
+	streamID, _ := parseSessionID(sessionID)
+	ctx = clog.AddVal(ctx, "streamID", streamID)
+
+	stream, exists := ls.LivepeerNode.ExternalCapabilities.Streams[streamID]
+	if !exists {
+		http.Error(w, fmt.Sprintf("Stream %s not found", streamID), http.StatusNotFound)
+		return
+	}
+
+	orchUrl := stream.OrchUrl
+	if orchUrl == "" {
+		clog.V(6).InfofErr(ctx, "Stream does not have an orchestrator URL")
+		http.Error(w, fmt.Sprintf("Stream %s does not have an orchestrator URL", streamID), http.StatusNotFound)
+		return
+	}
+
+	defer r.Body.Close()
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		clog.V(6).InfofErr(ctx, "Error reading request body: %v", err)
+		http.Error(w, "Error reading request body", http.StatusBadRequest)
+		return
+	}
+
+	req, err := http.NewRequestWithContext(ctx, r.Method, orchUrl+r.URL.Path, bytes.NewBuffer(body))
+	req.Header.Add("Content-Length", r.Header.Get("Content-Length"))
+	req.Header.Add("Content-Type", r.Header.Get("Content-Type"))
+
+	if err != nil {
+		clog.Errorf(ctx, "Unable to create request err=%v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	// set the headers
+	req.Header.Add("Content-Length", r.Header.Get("Content-Length"))
+	req.Header.Add("Content-Type", r.Header.Get("Content-Type"))
+	resp, err := sendReqWithTimeout(req, 30*time.Second)
+	if err != nil {
+		clog.Errorf(ctx, "Error sending request to orchestrator err=%v", err)
+		http.Error(w, fmt.Sprintf("Error sending request to orchestrator err=%v", err), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		clog.Errorf(ctx, "Error reading response body: %v", err)
+		http.Error(w, "Error reading response body", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(resp.StatusCode)
+	w.Write(respBody)
+}
+
+// ProcessRequestWHIPUpdate processes a WHIP update request for a source stream (can be update and delete)
+// Orchestrator updates the WHIP session
+func (h *lphttp) ProcessRequestWHIPUpdate(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	sessionID := strings.TrimPrefix(r.URL.Path, "/process/stream/whip/")
+	streamID, _ := parseSessionID(sessionID)
+	ctx = clog.AddVal(ctx, "streamID", streamID)
+
+	stream, exists := h.node.ExternalCapabilities.Streams[streamID]
+	if !exists {
+		http.Error(w, fmt.Sprintf("Stream %s not found", streamID), http.StatusNotFound)
+		return
+	}
+
+	var relay *RelayServer
+	if stream.StreamRelayServer == nil {
+		clog.V(6).InfofErr(ctx, "Stream does not have a source relay server")
+		http.Error(w, fmt.Sprintf("Stream %s does not have a source relay server", streamID), http.StatusNotFound)
+		return
+	}
+
+	relay = stream.StreamRelayServer.(*RelayServer)
+
+	defer r.Body.Close()
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		clog.V(6).InfofErr(ctx, "Error reading request body: %v", err)
+		http.Error(w, "Error reading request body", http.StatusBadRequest)
+		return
+	}
+
+	if r.Method != http.MethodPatch {
+		err := relay.updateWHIPSession(sessionID, body, r.Header.Get("Content-Type"))
+		if err != nil {
+			clog.V(6).InfofErr(ctx, "Error updating WHIP session err=%v", err)
+			http.Error(w, fmt.Sprintf("Error updating WHIP session err=%v", err), http.StatusBadRequest)
+			return
+		}
+
+		clog.V(6).Info(ctx, "WHIP session updated for stream")
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	if r.Method != http.MethodDelete {
+		relay.deleteWHIPSession(sessionID)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+}
+
+// ProcessRequestWHEPUpdate processes a WHEP update request for a source stream (can be update and delete)
+// Gateway forwards to the Orchestrator serving the stream
+func (ls *LivepeerServer) ProcessRequestWHEPUpdate(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	sessionID := strings.TrimPrefix(r.URL.Path, "/process/stream/whep/")
+	streamID, _ := parseSessionID(sessionID)
+	ctx = clog.AddVal(ctx, "streamID", streamID)
+
+	stream, exists := ls.LivepeerNode.ExternalCapabilities.Streams[streamID]
+	if !exists {
+		http.Error(w, fmt.Sprintf("Stream %s not found", streamID), http.StatusNotFound)
+		return
+	}
+
+	orchUrl := stream.OrchUrl
+	if orchUrl == "" {
+		clog.V(6).InfofErr(ctx, "Stream does not have an orchestrator URL")
+		http.Error(w, fmt.Sprintf("Stream %s does not have an orchestrator URL", streamID), http.StatusNotFound)
+		return
+	}
+
+	defer r.Body.Close()
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		clog.V(6).InfofErr(ctx, "Error reading request body: %v", err)
+		http.Error(w, "Error reading request body", http.StatusBadRequest)
+		return
+	}
+
+	req, err := http.NewRequestWithContext(ctx, r.Method, orchUrl+r.URL.Path, bytes.NewBuffer(body))
+	req.Header.Add("Content-Length", r.Header.Get("Content-Length"))
+	req.Header.Add("Content-Type", r.Header.Get("Content-Type"))
+
+	if err != nil {
+		clog.Errorf(ctx, "Unable to create request err=%v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	// set the headers
+	req.Header.Add("Content-Length", r.Header.Get("Content-Length"))
+	req.Header.Add("Content-Type", r.Header.Get("Content-Type"))
+	resp, err := sendReqWithTimeout(req, 30*time.Second)
+	if err != nil {
+		clog.Errorf(ctx, "Error sending request to orchestrator err=%v", err)
+		http.Error(w, fmt.Sprintf("Error sending request to orchestrator err=%v", err), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		clog.Errorf(ctx, "Error reading response body: %v", err)
+		http.Error(w, "Error reading response body", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(resp.StatusCode)
+	w.Write(respBody)
+	return
+}
+
+// ProcessRequestWHEPUpdate processes a WHEP update request for a source stream (can be update and delete)
+// Orchestrator updates the WHEP session
+func (h *lphttp) ProcessRequestWHEPUpdate(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	sessionID := strings.TrimPrefix(r.URL.Path, "/process/stream/whep/")
+	streamID, _ := parseSessionID(sessionID)
+	ctx = clog.AddVal(ctx, "streamID", streamID)
+
+	stream, exists := h.node.ExternalCapabilities.Streams[streamID]
+	if !exists {
+		http.Error(w, fmt.Sprintf("Stream %s not found", streamID), http.StatusNotFound)
+		return
+	}
+
+	var relay *RelayServer
+	if stream.StreamRelayServer == nil {
+		clog.V(6).InfofErr(ctx, "Stream does not have a source relay server")
+		http.Error(w, fmt.Sprintf("Stream %s does not have a source relay server", streamID), http.StatusNotFound)
+		return
+	}
+
+	relay = stream.StreamRelayServer.(*RelayServer)
+
+	defer r.Body.Close()
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		clog.V(6).InfofErr(ctx, "Error reading request body: %v", err)
+		http.Error(w, "Error reading request body", http.StatusBadRequest)
+		return
+	}
+
+	if r.Method != http.MethodPatch {
+		err := relay.updateWHEPSession(sessionID, body, r.Header.Get("Content-Type"))
+		if err != nil {
+			clog.V(6).InfofErr(ctx, "Error updating WHEP session err=%v", err)
+			http.Error(w, fmt.Sprintf("Error updating WHEP session err=%v", err), http.StatusBadRequest)
+			return
+		}
+
+		clog.V(6).Info(ctx, "WHEP session updated for stream")
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	if r.Method != http.MethodDelete {
+		relay.deleteWHEPSession(sessionID)
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
 func (h *lphttp) ProcessWorkerWHIP(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	// Handle WHIP update or delete from worker
+	if r.Method == http.MethodPatch || r.Method == http.MethodDelete {
+		sessionID := strings.TrimPrefix(r.URL.Path, "/process/worker/whip/")
+		streamID, _ := parseSessionID(sessionID)
+		ctx = clog.AddVal(ctx, "streamID", streamID)
+
+		stream, exists := h.node.ExternalCapabilities.Streams[streamID]
+		if !exists {
+			http.Error(w, fmt.Sprintf("Stream %s not found", streamID), http.StatusNotFound)
+			return
+		}
+
+		if stream.StreamRelayServer == nil {
+			clog.V(6).InfofErr(ctx, "Stream does not have a source relay server")
+			http.Error(w, fmt.Sprintf("Stream %s does not have a source relay server", streamID), http.StatusNotFound)
+			return
+		}
+
+		relay := stream.StreamRelayServer.(*RelayServer)
+
+		defer r.Body.Close()
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			clog.V(6).InfofErr(ctx, "Error reading request body: %v", err)
+			http.Error(w, "Error reading request body", http.StatusBadRequest)
+			return
+		}
+
+		if r.Method == http.MethodPatch {
+			err := relay.updateWHIPSession(sessionID, body, r.Header.Get("Content-Type"))
+			if err != nil {
+				clog.V(6).InfofErr(ctx, "Error updating WHIP session err=%v", err)
+				http.Error(w, fmt.Sprintf("Error updating WHIP session err=%v", err), http.StatusBadRequest)
+				return
+			}
+		}
+		if r.Method == http.MethodDelete {
+			relay.deleteWHIPSession(sessionID)
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	//handle creating a new WHIP session from worker
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -302,12 +566,12 @@ func (h *lphttp) ProcessWorkerWHIP(w http.ResponseWriter, r *http.Request) {
 	}
 	//create WHIP session for results from worker
 	workerResultStreamCtx, cancel := context.WithCancel(context.Background())
-	relay, addWhep := NewRelayServer(workerResultStreamCtx)
+	relay := NewRelayServer(workerResultStreamCtx)
 	stream.WorkerStreamCtx = workerResultStreamCtx
 	stream.WorkerCancelStream = cancel
-	stream.WorkerAddStreamWhep = addWhep
+	stream.WorkerRelayServer = relay
 
-	_, whipAnswer, status_code, err := relay.createWHIPSession(body, r.Header.Get("Content-Type"), streamID, "worker")
+	sessionID, whipAnswer, status_code, err := relay.CreateWHIPSession(body, r.Header.Get("Content-Type"), streamID, "worker")
 
 	if err != nil {
 		clog.Errorf(ctx, "Error creating WHIP session err=%v", err)
@@ -318,7 +582,7 @@ func (h *lphttp) ProcessWorkerWHIP(w http.ResponseWriter, r *http.Request) {
 	clog.Infof(ctx, "Worker WHIP session created for stream %s", streamID)
 	// Set response headers
 	w.Header().Set("Content-Type", "application/sdp")
-	w.Header().Set("Location", fmt.Sprintf("/process/worker/whip/%s", streamID))
+	w.Header().Set("Location", fmt.Sprintf("/process/worker/whip/%s", sessionID))
 	w.WriteHeader(http.StatusCreated)
 
 	// Send SDP answer
@@ -327,7 +591,51 @@ func (h *lphttp) ProcessWorkerWHIP(w http.ResponseWriter, r *http.Request) {
 
 func (h *lphttp) ProcessWorkerWHEP(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	// Handle WHEP update or delete from worker
+	if r.Method == http.MethodPatch || r.Method == http.MethodDelete {
+		sessionID := strings.TrimPrefix(r.URL.Path, "/process/worker/whep/")
+		streamID, _ := parseSessionID(sessionID)
+		ctx = clog.AddVal(ctx, "streamID", streamID)
 
+		stream, exists := h.node.ExternalCapabilities.Streams[streamID]
+		if !exists {
+			http.Error(w, fmt.Sprintf("Stream %s not found", streamID), http.StatusNotFound)
+			return
+		}
+
+		if stream.StreamRelayServer == nil {
+			clog.V(6).InfofErr(ctx, "Stream does not have a source relay server")
+			http.Error(w, fmt.Sprintf("Stream %s does not have a source relay server", streamID), http.StatusNotFound)
+			return
+		}
+
+		relay := stream.StreamRelayServer.(*RelayServer)
+
+		defer r.Body.Close()
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			clog.V(6).InfofErr(ctx, "Error reading request body: %v", err)
+			http.Error(w, "Error reading request body", http.StatusBadRequest)
+			return
+		}
+
+		if r.Method == http.MethodPatch {
+			err := relay.updateWHEPSession(sessionID, body, r.Header.Get("Content-Type"))
+			if err != nil {
+				clog.V(6).InfofErr(ctx, "Error updating WHIP session err=%v", err)
+				http.Error(w, fmt.Sprintf("Error updating WHIP session err=%v", err), http.StatusBadRequest)
+				return
+			}
+		}
+		if r.Method == http.MethodDelete {
+			relay.deleteWHEPSession(sessionID)
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	//handle creating a new WHEP session from worker
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -348,25 +656,27 @@ func (h *lphttp) ProcessWorkerWHEP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Create WHEP session for results from worker
-	var answer string
-	if fn, ok := stream.AddStreamWhep.(func([]byte, string, string, string) (string, int, error)); ok {
-		whepAnswer, statusCode, err := fn(body, r.Header.Get("Content-Type"), streamID, "source")
+	var (
+		answer     string
+		sessionID  string
+		statusCode int
+	)
+	if relay, ok := stream.WorkerRelayServer.(*RelayServer); ok {
+		sessionID, answer, statusCode, err = relay.CreateWHEPSession(body, r.Header.Get("Content-Type"), streamID, "source")
 		if err != nil {
 			clog.Errorf(ctx, "Error creating WHEP session err=%v", err)
 			http.Error(w, fmt.Sprintf("Error creating WHEP session err=%v", err), statusCode)
 			return
 		}
-		answer = whepAnswer
-
 	} else {
-		clog.Errorf(ctx, "AddStreamWhep is not a valid function")
+		clog.Errorf(ctx, "Relay server not found for stream %s", streamID)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
 	// Set response headers
 	w.Header().Set("Content-Type", "application/sdp")
-	w.Header().Set("Location", fmt.Sprintf("/process/worker/whep/%s", streamID))
+	w.Header().Set("Location", fmt.Sprintf("/process/worker/whep/%s", sessionID))
 	w.WriteHeader(http.StatusCreated)
 
 	// Send SDP answer
@@ -440,23 +750,29 @@ func (ls *LivepeerServer) submitJob(ctx context.Context, w http.ResponseWriter, 
 	jobReq.orchSearchRespTimeout = respTimeout
 
 	//get pool of Orchestrators that can do the job
-	var orchs []JobToken
-	if jobReqDetails.StartStreamOutput {
+	// for streams: refresh orch token for the orchestrator that is currently serving the stream
+	// for non-streams: get the orchestrators that can do the job based on capability
+	var (
+		orchs        []JobToken
+		overrideUrls []string
+	)
+
+	if jobReqDetails.StartStreamOutput || jobReqDetails.StopStream {
 		orchStream, ok := ls.LivepeerNode.ExternalCapabilities.Streams[jobReqDetails.StreamID]
 		if ok {
-			orchs = append(orchs, orchStream.OrchToken.(JobToken))
+			overrideUrls = append(overrideUrls, orchStream.OrchUrl)
 		} else {
 			clog.Errorf(ctx, "Stream not found %v", jobReqDetails.StreamID)
 			http.Error(w, fmt.Sprintf("Stream not found %v", jobReqDetails.StreamID), http.StatusServiceUnavailable)
 			return
 		}
-	} else {
-		orchs, err = getJobOrchestrators(ctx, ls.LivepeerNode, jobReq.Capability, jobReq.orchSearchTimeout, jobReq.orchSearchRespTimeout)
-		if err != nil {
-			clog.Errorf(ctx, "Unable to find orchestrators for capability %v err=%v", jobReq.Capability, err)
-			http.Error(w, fmt.Sprintf("Unable to find orchestrators for capability %v err=%v", jobReq.Capability, err), http.StatusBadRequest)
-			return
-		}
+	}
+
+	orchs, err = getJobOrchestrators(ctx, ls.LivepeerNode, jobReq.Capability, jobReq.orchSearchTimeout, jobReq.orchSearchRespTimeout, overrideUrls)
+	if err != nil {
+		clog.Errorf(ctx, "Unable to find orchestrators for capability %v err=%v", jobReq.Capability, err)
+		http.Error(w, fmt.Sprintf("Unable to find orchestrators for capability %v err=%v", jobReq.Capability, err), http.StatusBadRequest)
+		return
 	}
 
 	if len(orchs) == 0 {
@@ -470,8 +786,7 @@ func (ls *LivepeerServer) submitJob(ctx context.Context, w http.ResponseWriter, 
 	for _, orchToken := range orchs {
 		if jobReqDetails.StartStream {
 			sd := ls.LivepeerNode.ExternalCapabilities.Streams[jobReqDetails.StreamID]
-			sd.CurrentOrchUrl = orchToken.ServiceAddr
-			sd.OrchToken = orchToken
+			sd.OrchUrl = orchToken.ServiceAddr
 		}
 
 		// Pass through the url path to the Orchestrator
@@ -549,12 +864,11 @@ func (ls *LivepeerServer) submitJob(ctx context.Context, w http.ResponseWriter, 
 
 			// set WHIP/WHEP response headers if applicable
 			respCode := http.StatusOK
-			if jobReqDetails.StartStreamOutput || jobReqDetails.UpdateStream || jobReqDetails.StartStream || jobReqDetails.StopStream {
-				w.Header().Set("Content-Type", "application/sdp")
-				w.Header().Set("Location", fmt.Sprintf("/process/request/whip/%s", jobReqDetails.StreamID))
-				if jobReqDetails.StartStream {
-					w.Header().Set("X-Stream-Id", resp.Header.Get("X-Stream-Id"))
-				}
+			if jobReqDetails.StartStream || jobReqDetails.StartStreamOutput {
+				w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
+				w.Header().Set("Location", resp.Header.Get("Location"))
+				w.Header().Set("X-Stream-Id", resp.Header.Get("X-Stream-Id"))
+
 				respCode = http.StatusCreated
 			}
 
@@ -722,28 +1036,31 @@ func processJob(ctx context.Context, h *lphttp, w http.ResponseWriter, r *http.R
 		return
 	}
 
-	//setup stream if starting
-	answer := ""
+	//setup stream WHIP if stream starting
+	var (
+		answer     string
+		sessionID  string
+		statusCode int
+	)
 	if jobReqDetails.StartStream {
 		clog.Infof(ctx, "starting stream with id %v", jobReqDetails.StreamID)
 
 		streamCtx, cancel := context.WithCancel(context.Background())
-		relay, addWhep := NewRelayServer(streamCtx)
-		_, whipAnswer, status_code, err := relay.createWHIPSession(body, r.Header.Get("Content-Type"), jobReqDetails.StreamID, "source")
+		relay := NewRelayServer(streamCtx)
+		sessionID, answer, statusCode, err = relay.CreateWHIPSession(body, r.Header.Get("Content-Type"), jobReqDetails.StreamID, "source")
 
 		if err != nil {
 			clog.Errorf(ctx, "Error creating WHIP session err=%v", err)
-			http.Error(w, fmt.Sprintf("Error creating WHIP session err=%v", err), status_code)
+			http.Error(w, fmt.Sprintf("Error creating WHIP session err=%v", err), statusCode)
 			return
 		}
 		// Store session information
-		answer = whipAnswer
 		h.node.ExternalCapabilities.Streams[jobReqDetails.StreamID] = &core.StreamData{
-			StreamID:      jobReqDetails.StreamID,
-			StreamCtx:     streamCtx,
-			CancelStream:  cancel,
-			AddStreamWhep: addWhep,
-			Sender:        sender,
+			StreamID:          jobReqDetails.StreamID,
+			StreamCtx:         streamCtx,
+			CancelStream:      cancel,
+			StreamRelayServer: relay,
+			Sender:            sender,
 		}
 		//override the body to just include the stream ID for the worker to use to create
 		// the WHIP request to send the results back to the Orchestrator
@@ -751,8 +1068,10 @@ func processJob(ctx context.Context, h *lphttp, w http.ResponseWriter, r *http.R
 
 	}
 
+	//start a WHEP session that sends results received by Orchestrator to the client
+	// does not need to pass request to worker
 	if jobReqDetails.StartStreamOutput {
-		clog.Infof(ctx, "starting stream output with id %v", jobReqDetails.StreamID)
+		clog.Infof(ctx, "starting stream output for %v", jobReqDetails.StreamID)
 		stream, ok := h.node.ExternalCapabilities.Streams[jobReqDetails.StreamID]
 		if !ok {
 			clog.Errorf(ctx, "Stream %s not found", jobReqDetails.StreamID)
@@ -760,15 +1079,18 @@ func processJob(ctx context.Context, h *lphttp, w http.ResponseWriter, r *http.R
 			return
 		}
 
-		var answer string
-		if fn, ok := stream.WorkerAddStreamWhep.(func([]byte, string, string, string) (string, int, error)); ok {
-			whepAnswer, statusCode, err := fn(body, r.Header.Get("Content-Type"), jobReqDetails.StreamID, "result")
+		var (
+			answer     string
+			sessionID  string
+			statusCode int
+		)
+		if relay, ok := stream.StreamRelayServer.(*RelayServer); ok {
+			sessionID, answer, statusCode, err = relay.CreateWHEPSession(body, r.Header.Get("Content-Type"), jobReqDetails.StreamID, "result")
 			if err != nil {
 				clog.Errorf(ctx, "Error creating WHEP session err=%v", err)
 				http.Error(w, fmt.Sprintf("Error creating WHEP session err=%v", err), statusCode)
 				return
 			}
-			answer = whepAnswer
 		} else {
 			clog.Errorf(ctx, "AddStreamWhep is not a valid function")
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -776,7 +1098,7 @@ func processJob(ctx context.Context, h *lphttp, w http.ResponseWriter, r *http.R
 		}
 
 		w.Header().Set("Content-Type", "application/sdp")
-		w.Header().Set("Location", fmt.Sprintf("/process/request/whep/%s", jobReqDetails.StreamID))
+		w.Header().Set("Location", fmt.Sprintf("/process/stream/whep/%s", sessionID))
 		w.WriteHeader(http.StatusCreated)
 		// Send SDP answer
 		w.Write([]byte(answer))
@@ -859,9 +1181,10 @@ func processJob(ctx context.Context, h *lphttp, w http.ResponseWriter, r *http.R
 		clog.V(common.SHORT).Infof(ctx, "Job processed successfully took=%v balance=%v", time.Since(start), getPaymentBalance(orch, sender, jobId).FloatString(0))
 
 		respCode := http.StatusOK
-		if jobReqDetails.StartStreamOutput || jobReqDetails.UpdateStream || jobReqDetails.StartStream || jobReqDetails.StopStream {
+		// Set WHIP response if applicable
+		if jobReqDetails.StartStream {
 			w.Header().Set("Content-Type", "application/sdp")
-			w.Header().Set("Location", fmt.Sprintf("/process/request/whip/%s", jobReqDetails.StreamID))
+			w.Header().Set("Location", fmt.Sprintf("/process/stream/whip/%s", sessionID))
 			if jobReqDetails.StartStream {
 				w.Header().Set("X-Stream-Id", jobReqDetails.StreamID)
 			}
@@ -1217,8 +1540,25 @@ func getOrchSearchTimeouts(ctx context.Context, searchTimeoutHdr, respTimeoutHdr
 	return timeout, respTimeout
 }
 
-func getJobOrchestrators(ctx context.Context, node *core.LivepeerNode, capability string, timeout time.Duration, respTimeout time.Duration) ([]JobToken, error) {
-	orchs := node.OrchestratorPool.GetInfos()
+func getJobOrchestrators(ctx context.Context, node *core.LivepeerNode, capability string, timeout time.Duration, respTimeout time.Duration, overrideUrls []string) ([]JobToken, error) {
+	var orchs []common.OrchestratorLocalInfo
+	if len(overrideUrls) == 0 {
+		orchs = node.OrchestratorPool.GetInfos()
+	} else {
+		// Use the override URLs to get the orchestrators
+		orchs = make([]common.OrchestratorLocalInfo, len(overrideUrls))
+		for i, urlStr := range overrideUrls {
+			orchUrl, err := url.Parse(urlStr)
+			if err != nil {
+				clog.Errorf(ctx, "Invalid orchestrator URL %s err=%v", urlStr, err)
+				return nil, fmt.Errorf("invalid orchestrator URL %s: %w", urlStr, err)
+			}
+			orchs[i] = common.OrchestratorLocalInfo{
+				URL: orchUrl,
+			}
+		}
+	}
+
 	gateway := node.OrchestratorPool.Broadcaster()
 
 	//setup the GET request to get the Orchestrator tokens

@@ -109,6 +109,8 @@ func startAIMediaServer(ctx context.Context, ls *LivepeerServer) error {
 
 	//API for dynamic capabilities
 	ls.HTTPMux.Handle("/process/request/", ls.SubmitJob())
+	ls.HTTPMux.HandleFunc("/process/stream/whip/", ls.ProcessRequestWHIPUpdate)
+	ls.HTTPMux.HandleFunc("/process/stream/whep/", ls.ProcessRequestWHEPUpdate)
 
 	media.StartFileCleanup(ctx, ls.LivepeerNode.WorkDir)
 	return nil
