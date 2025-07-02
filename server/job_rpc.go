@@ -42,8 +42,6 @@ const jobOrchSearchRespTimeoutHdr = "Livepeer-Orch-Search-Resp-Timeout"
 const jobOrchSearchTimeoutDefault = 1 * time.Second
 const jobOrchSearchRespTimeoutDefault = 500 * time.Millisecond
 
-var jobStreams = make(map[string]*RelayServer)
-
 var errNoTimeoutSet = errors.New("no timeout_seconds set with request, timeout_seconds is required")
 
 type JobSender struct {
@@ -280,7 +278,7 @@ func (ls *LivepeerServer) SubmitJob() http.Handler {
 
 // ProcessRequestWHIPUpdate processes a WHIP update request for a source stream (can be update and delete)
 // Gateway forwards to the Orchestrator serving the stream
-func (ls *LivepeerServer) ProcessRequestWHIPUpdate(w http.ResponseWriter, r *http.Request) {
+func (ls *LivepeerServer) ProcessStreamWHIPUpdate(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	sessionID := strings.TrimPrefix(r.URL.Path, "/process/stream/whip/")
 	streamID, _ := parseSessionID(sessionID)
@@ -339,7 +337,7 @@ func (ls *LivepeerServer) ProcessRequestWHIPUpdate(w http.ResponseWriter, r *htt
 
 // ProcessRequestWHIPUpdate processes a WHIP update request for a source stream (can be update and delete)
 // Orchestrator updates the WHIP session
-func (h *lphttp) ProcessRequestWHIPUpdate(w http.ResponseWriter, r *http.Request) {
+func (h *lphttp) ProcessStreamWHIPUpdate(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	sessionID := strings.TrimPrefix(r.URL.Path, "/process/stream/whip/")
 	streamID, _ := parseSessionID(sessionID)
@@ -388,9 +386,9 @@ func (h *lphttp) ProcessRequestWHIPUpdate(w http.ResponseWriter, r *http.Request
 	}
 }
 
-// ProcessRequestWHEPUpdate processes a WHEP update request for a source stream (can be update and delete)
+// ProcessRequestWHEPUpdate processes a WHEP update request for a result stream (can be update and delete)
 // Gateway forwards to the Orchestrator serving the stream
-func (ls *LivepeerServer) ProcessRequestWHEPUpdate(w http.ResponseWriter, r *http.Request) {
+func (ls *LivepeerServer) ProcessStreamWHEPUpdate(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	sessionID := strings.TrimPrefix(r.URL.Path, "/process/stream/whep/")
 	streamID, _ := parseSessionID(sessionID)
@@ -445,12 +443,11 @@ func (ls *LivepeerServer) ProcessRequestWHEPUpdate(w http.ResponseWriter, r *htt
 
 	w.WriteHeader(resp.StatusCode)
 	w.Write(respBody)
-	return
 }
 
-// ProcessRequestWHEPUpdate processes a WHEP update request for a source stream (can be update and delete)
+// ProcessRequestWHEPUpdate processes a WHEP update request for a result stream (can be update and delete)
 // Orchestrator updates the WHEP session
-func (h *lphttp) ProcessRequestWHEPUpdate(w http.ResponseWriter, r *http.Request) {
+func (h *lphttp) ProcessStreamWHEPUpdate(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	sessionID := strings.TrimPrefix(r.URL.Path, "/process/stream/whep/")
 	streamID, _ := parseSessionID(sessionID)
@@ -498,6 +495,8 @@ func (h *lphttp) ProcessRequestWHEPUpdate(w http.ResponseWriter, r *http.Request
 	}
 }
 
+// worker creates a WHIP session for results from worker that the
+// orchestrator can subscribe to for WHEP sessions
 func (h *lphttp) ProcessWorkerWHIP(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	// Handle WHIP update or delete from worker
@@ -571,7 +570,7 @@ func (h *lphttp) ProcessWorkerWHIP(w http.ResponseWriter, r *http.Request) {
 	stream.WorkerCancelStream = cancel
 	stream.WorkerRelayServer = relay
 
-	sessionID, whipAnswer, status_code, err := relay.CreateWHIPSession(body, r.Header.Get("Content-Type"), streamID, "worker")
+	sessionID, whipAnswer, status_code, err := relay.CreateWHIPSession(body, r.Header.Get("Content-Type"), streamID, "result")
 
 	if err != nil {
 		clog.Errorf(ctx, "Error creating WHIP session err=%v", err)
@@ -589,6 +588,7 @@ func (h *lphttp) ProcessWorkerWHIP(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(whipAnswer))
 }
 
+// Worker subscribes to source stream relay server for WHEP sessions
 func (h *lphttp) ProcessWorkerWHEP(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	// Handle WHEP update or delete from worker
@@ -661,7 +661,7 @@ func (h *lphttp) ProcessWorkerWHEP(w http.ResponseWriter, r *http.Request) {
 		sessionID  string
 		statusCode int
 	)
-	if relay, ok := stream.WorkerRelayServer.(*RelayServer); ok {
+	if relay, ok := stream.StreamRelayServer.(*RelayServer); ok {
 		sessionID, answer, statusCode, err = relay.CreateWHEPSession(body, r.Header.Get("Content-Type"), streamID, "source")
 		if err != nil {
 			clog.Errorf(ctx, "Error creating WHEP session err=%v", err)
@@ -685,7 +685,7 @@ func (h *lphttp) ProcessWorkerWHEP(w http.ResponseWriter, r *http.Request) {
 
 func (ls *LivepeerServer) submitJob(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 	jobReqHdr := r.Header.Get(jobRequestHdr)
-	jobReq, err := verifyJobCreds(ctx, nil, jobReqHdr)
+	jobReq, jobReqDetails, err := verifyJobCreds(ctx, nil, jobReqHdr)
 	if err != nil {
 		clog.Errorf(ctx, "Unable to verify job creds err=%v", err)
 		http.Error(w, fmt.Sprintf("Unable to parse job request, err=%v", err), http.StatusBadRequest)
@@ -704,17 +704,9 @@ func (ls *LivepeerServer) submitJob(ctx context.Context, w http.ResponseWriter, 
 	r.Body.Close()
 
 	//pre-process the request
-	//get the job request details
-	var jobReqDetails JobRequestDetails
-	if err := json.Unmarshal([]byte(jobReq.Request), &jobReqDetails); err != nil {
-		clog.Errorf(ctx, "Unable to unmarshal job request details err=%v", err)
-		http.Error(w, fmt.Sprintf("Unable to unmarshal job request details err=%v", err), http.StatusBadRequest)
-		return
-	}
-
 	if jobReqDetails.StartStream {
 		//include random suffix to streamID to avoid conflicts
-		jobReqDetails.StreamID = fmt.Sprintf("%s-%s", jobReqDetails.StreamID, string(core.RandomManifestID()))
+		jobReqDetails.StreamID = fmt.Sprintf("%s_%s", jobReqDetails.StreamID, string(core.RandomManifestID()))
 
 		// Register the stream in the external capabilities
 		ls.LivepeerNode.ExternalCapabilities.Streams[jobReqDetails.StreamID] = &core.StreamData{
@@ -750,7 +742,8 @@ func (ls *LivepeerServer) submitJob(ctx context.Context, w http.ResponseWriter, 
 	jobReq.orchSearchRespTimeout = respTimeout
 
 	//get pool of Orchestrators that can do the job
-	// for streams: refresh orch token for the orchestrator that is currently serving the stream
+	// for starting streams: find and orchestrator to run the stream
+	// for running streams: refresh orch token for the orchestrator that is currently serving the stream
 	// for non-streams: get the orchestrators that can do the job based on capability
 	var (
 		orchs        []JobToken
@@ -765,6 +758,17 @@ func (ls *LivepeerServer) submitJob(ctx context.Context, w http.ResponseWriter, 
 			clog.Errorf(ctx, "Stream not found %v", jobReqDetails.StreamID)
 			http.Error(w, fmt.Sprintf("Stream not found %v", jobReqDetails.StreamID), http.StatusServiceUnavailable)
 			return
+		}
+
+		//stop the stream at the gateway (just removes Orchestrator tracking at Gateway)
+		// request will pass through to the Orchestrator and worker to stop the streams
+		if jobReqDetails.StopStream {
+			err := ls.LivepeerNode.ExternalCapabilities.StopStream(jobReqDetails.StreamID)
+			if err != nil {
+				clog.Errorf(ctx, "Unable to stop stream %v err=%v", jobReqDetails.StreamID, err)
+				http.Error(w, fmt.Sprintf("Unable to stop stream %v err=%v", jobReqDetails.StreamID, err), http.StatusInternalServerError)
+				return
+			}
 		}
 	}
 
@@ -950,7 +954,7 @@ func processJob(ctx context.Context, h *lphttp, w http.ResponseWriter, r *http.R
 	// check the prompt sig from the request
 	// confirms capacity available before processing payment info
 	job := r.Header.Get(jobRequestHdr)
-	jobReq, err := verifyJobCreds(ctx, orch, job)
+	jobReq, jobReqDetails, err := verifyJobCreds(ctx, orch, job)
 	if err != nil {
 		if err == errZeroCapacity {
 			clog.Errorf(ctx, "No capacity available for capability err=%q", err)
@@ -995,7 +999,6 @@ func processJob(ctx context.Context, h *lphttp, w http.ResponseWriter, r *http.R
 		}
 
 		if payment.TicketParams == nil {
-
 			//if price is not 0, comfirm balance
 			if jobPriceRat.Cmp(big.NewRat(0, 1)) > 0 {
 				minBal := jobPriceRat.Mul(jobPriceRat, big.NewRat(60, 1)) //minimum 1 minute balance
@@ -1029,12 +1032,6 @@ func processJob(ctx context.Context, h *lphttp, w http.ResponseWriter, r *http.R
 		return
 	}
 	r.Body.Close()
-	var jobReqDetails JobRequestDetails
-	if err := json.Unmarshal([]byte(jobReq.Request), &jobReqDetails); err != nil {
-		clog.Errorf(ctx, "Unable to unmarshal job request details err=%v", err)
-		http.Error(w, fmt.Sprintf("Unable to unmarshal job request details err=%v", err), http.StatusBadRequest)
-		return
-	}
 
 	//setup stream WHIP if stream starting
 	var (
@@ -1043,12 +1040,20 @@ func processJob(ctx context.Context, h *lphttp, w http.ResponseWriter, r *http.R
 		statusCode int
 	)
 	if jobReqDetails.StartStream {
+		//reserve the capacity
+		err := orch.ReserveExternalCapabilityCapacity(jobReq.Capability)
+		if err != nil {
+			clog.Errorf(ctx, "No capacity available for capability %v err=%v", jobReq.Capability, err)
+			http.Error(w, fmt.Sprintf("No capacity available for capability %v err=%v", jobReq.Capability, err), http.StatusServiceUnavailable)
+			return
+		}
+		//start the stream relay server
 		clog.Infof(ctx, "starting stream with id %v", jobReqDetails.StreamID)
 
 		streamCtx, cancel := context.WithCancel(context.Background())
+
 		relay := NewRelayServer(streamCtx)
 		sessionID, answer, statusCode, err = relay.CreateWHIPSession(body, r.Header.Get("Content-Type"), jobReqDetails.StreamID, "source")
-
 		if err != nil {
 			clog.Errorf(ctx, "Error creating WHIP session err=%v", err)
 			http.Error(w, fmt.Sprintf("Error creating WHIP session err=%v", err), statusCode)
@@ -1084,7 +1089,7 @@ func processJob(ctx context.Context, h *lphttp, w http.ResponseWriter, r *http.R
 			sessionID  string
 			statusCode int
 		)
-		if relay, ok := stream.StreamRelayServer.(*RelayServer); ok {
+		if relay, ok := stream.WorkerRelayServer.(*RelayServer); ok {
 			sessionID, answer, statusCode, err = relay.CreateWHEPSession(body, r.Header.Get("Content-Type"), jobReqDetails.StreamID, "result")
 			if err != nil {
 				clog.Errorf(ctx, "Error creating WHEP session err=%v", err)
@@ -1103,6 +1108,20 @@ func processJob(ctx context.Context, h *lphttp, w http.ResponseWriter, r *http.R
 		// Send SDP answer
 		w.Write([]byte(answer))
 		return
+	}
+
+	if jobReqDetails.StopStream {
+		//remove the stream from the external capabilities
+		if _, ok := h.node.ExternalCapabilities.Streams[jobReqDetails.StreamID]; ok {
+			err := h.node.ExternalCapabilities.StopStream(jobReqDetails.StreamID)
+			if err != nil {
+				clog.Errorf(ctx, "Unable to stop stream %v err=%v", jobReqDetails.StreamID, err)
+				http.Error(w, fmt.Sprintf("Unable to stop stream %v err=%v", jobReqDetails.StreamID, err), http.StatusInternalServerError)
+				return
+			}
+			clog.Infof(ctx, "Stream %s stopped successfully", jobReqDetails.StreamID)
+			orch.FreeExternalCapabilityCapacity(jobReq.Capability)
+		}
 	}
 
 	// Extract the worker resource route from the URL path
@@ -1147,9 +1166,12 @@ func processJob(ctx context.Context, h *lphttp, w http.ResponseWriter, r *http.R
 	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
 	w.Header().Set("X-Metadata", resp.Header.Get("X-Metadata"))
 
-	//release capacity for another request
+	//release capacity for another request if not starting a stream
 	// if requester closes the connection need to release capacity
-	defer orch.FreeExternalCapabilityCapacity(jobReq.Capability)
+	// if starting a stream or stream output, capacity is released when the stream is stopped
+	if !jobReqDetails.StartStream && !jobReqDetails.StartStreamOutput {
+		defer orch.FreeExternalCapabilityCapacity(jobReq.Capability)
+	}
 
 	if !strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
 		//non streaming response
@@ -1459,37 +1481,44 @@ func verifyTokenCreds(ctx context.Context, orch Orchestrator, tokenCreds string)
 	return &jobSender, nil
 }
 
-func parseJobRequest(jobReq string) (*JobRequest, error) {
+func parseJobRequest(jobReq string) (*JobRequest, *JobRequestDetails, error) {
 	buf, err := base64.StdEncoding.DecodeString(jobReq)
 	if err != nil {
 		glog.Error("Unable to base64-decode ", err)
-		return nil, errSegEncoding
+		return nil, nil, errSegEncoding
 	}
 
 	var jobData JobRequest
 	err = json.Unmarshal(buf, &jobData)
 	if err != nil {
 		glog.Error("Unable to unmarshal ", err)
-		return nil, err
+		return nil, nil, err
 	}
 
 	if jobData.Timeout == 0 {
-		return nil, errNoTimeoutSet
+		return nil, nil, errNoTimeoutSet
 	}
 
-	return &jobData, nil
+	var jobReqDetails JobRequestDetails
+	err = json.Unmarshal([]byte(jobData.Request), &jobReqDetails)
+	if err != nil {
+		glog.Error("Unable to unmarshal job request details ", err)
+		return nil, nil, err
+	}
+
+	return &jobData, &jobReqDetails, nil
 }
 
-func verifyJobCreds(ctx context.Context, orch Orchestrator, jobCreds string) (*JobRequest, error) {
+func verifyJobCreds(ctx context.Context, orch Orchestrator, jobCreds string) (*JobRequest, *JobRequestDetails, error) {
 	//Gateway needs JobRequest parsed and verification of required fields
-	jobData, err := parseJobRequest(jobCreds)
+	jobData, jobReqDetails, err := parseJobRequest(jobCreds)
 	if err != nil {
 		glog.Error("Unable to unmarshal ", err)
-		return nil, err
+		return nil, nil, err
 	}
 
 	if jobData.Timeout == 0 {
-		return nil, errNoTimeoutSet
+		return nil, nil, errNoTimeoutSet
 	}
 
 	//Orchestrator also verifies the signature of the request to confirm
@@ -1502,22 +1531,25 @@ func verifyJobCreds(ctx context.Context, orch Orchestrator, jobCreds string) (*J
 		sigByte, err := hex.DecodeString(sigHex)
 		if err != nil {
 			clog.Errorf(ctx, "Unable to hex-decode signature", err)
-			return nil, errSegSig
+			return nil, nil, errSegSig
 		}
 
 		if !orch.VerifySig(ethcommon.HexToAddress(jobData.Sender), jobData.Request+jobData.Parameters, sigByte) {
 			clog.Errorf(ctx, "Sig check failed sender=%v", jobData.Sender)
-			return nil, errSegSig
+			return nil, nil, errSegSig
 		}
 
-		if orch.ReserveExternalCapabilityCapacity(jobData.Capability) != nil {
-			return nil, errZeroCapacity
+		//do not reserve capacity for a stream, handled manually in processJob
+		if !jobReqDetails.StartStream || jobReqDetails.StreamID != "" {
+			if orch.ReserveExternalCapabilityCapacity(jobData.Capability) != nil {
+				return nil, nil, errZeroCapacity
+			}
 		}
 
 		jobData.CapabilityUrl = orch.GetUrlForCapability(jobData.Capability)
 	}
 
-	return jobData, nil
+	return jobData, jobReqDetails, nil
 }
 
 func getOrchSearchTimeouts(ctx context.Context, searchTimeoutHdr, respTimeoutHdr string) (time.Duration, time.Duration) {

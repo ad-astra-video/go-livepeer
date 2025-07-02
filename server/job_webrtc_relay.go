@@ -6,13 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/golang/glog"
+	"github.com/livepeer/go-livepeer/clog"
 	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v4"
 )
@@ -39,9 +38,10 @@ type WHEPSession struct {
 
 // RelayServer manages WHIP/WHEP connections and media relay
 type RelayServer struct {
-	ctx     context.Context
-	ingress *WHIPSession
-	egress  []*WHEPSession
+	ctx             context.Context
+	ingress         *WHIPSession
+	egress          []*WHEPSession
+	releaseCapacity chan struct{}
 
 	mu         sync.RWMutex
 	transforms map[string]func([]byte) []byte
@@ -79,13 +79,19 @@ func NewRelayServer(ctx context.Context) *RelayServer {
 
 func (rs *RelayServer) Start() {
 	<-rs.ctx.Done()
-	rs.Stop()
+	rs.stop()
 }
 
-func (rs *RelayServer) Stop() {
-	glog.Infof("RelayServer: Shutting down")
+func (rs *RelayServer) stop() {
+	clog.Infof(rs.ctx, "RelayServer: Shutting down")
 	rs.cleanupWHIPSession()
 	rs.cleanupWHEPSessions()
+
+	//release the capacity for source stream
+	if rs.releaseCapacity != nil {
+		clog.Infof(rs.ctx, "RelayServer: Releasing capacity for source stream")
+		rs.releaseCapacity <- struct{}{}
+	}
 }
 
 func (rs *RelayServer) CreateWHIPSession(body []byte, contentType string, streamID string, sessionType string) (string, string, int, error) {
@@ -110,10 +116,10 @@ func (rs *RelayServer) CreateWHIPSession(body []byte, contentType string, stream
 	peerConn.OnICECandidate(func(candidate *webrtc.ICECandidate) {
 		if candidate == nil {
 			// Gathering done
-			glog.Infof("ICE candidate gathering complete")
+			clog.Infof(rs.ctx, "ICE candidate gathering complete")
 			return
 		}
-		glog.Infof("New ICE Candidate: %s", candidate.ToJSON().Candidate)
+		clog.Infof(rs.ctx, "New ICE Candidate: %s", candidate.ToJSON().Candidate)
 	})
 
 	// Generate session ID
@@ -129,7 +135,7 @@ func (rs *RelayServer) CreateWHIPSession(body []byte, contentType string, stream
 
 	// Handle incoming tracks
 	peerConn.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
-		log.Printf("WHIP Session %s: Received track %s", sessionID, track.Kind().String())
+		clog.Infof(rs.ctx, "WHIP Session %s: Received track %s", sessionID, track.Kind().String())
 
 		session.mu.Lock()
 		session.Tracks[track.Kind().String()] = track
@@ -144,7 +150,7 @@ func (rs *RelayServer) CreateWHIPSession(body []byte, contentType string, stream
 
 	// Handle connection state changes
 	peerConn.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
-		glog.Infof("WHIP Session %s: Connection state changed to %s", sessionID, state.String())
+		clog.Infof(rs.ctx, "WHIP Session %s: Connection state changed to %s", sessionID, state.String())
 		if state == webrtc.PeerConnectionStateClosed || state == webrtc.PeerConnectionStateFailed {
 			//cleanup WHIP and WHEP sessions
 			rs.ctx.Done()
@@ -184,7 +190,7 @@ func (rs *RelayServer) CreateWHIPSession(body []byte, contentType string, stream
 	rs.ingress = session
 	rs.mu.Unlock()
 
-	glog.Infof("Created WHIP session: %s", sessionID)
+	clog.Infof(rs.ctx, "Created WHIP session: %s", sessionID)
 
 	return sessionID, answer.SDP, http.StatusCreated, nil
 }
@@ -210,10 +216,10 @@ func (rs *RelayServer) CreateWHEPSession(body []byte, contentType string, stream
 	peerConn.OnICECandidate(func(candidate *webrtc.ICECandidate) {
 		if candidate == nil {
 			// Gathering done
-			glog.Infof("ICE candidate gathering complete")
+			clog.Infof(rs.ctx, "ICE candidate gathering complete")
 			return
 		}
-		glog.Infof("New ICE Candidate: %s", candidate.ToJSON().Candidate)
+		clog.Infof(rs.ctx, "New ICE Candidate: %s", candidate.ToJSON().Candidate)
 	})
 
 	// Generate session ID
@@ -235,7 +241,7 @@ func (rs *RelayServer) CreateWHEPSession(body []byte, contentType string, stream
 
 	// Handle connection state changes
 	peerConn.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
-		log.Printf("WHEP Session %s: Connection state changed to %s", sessionID, state.String())
+		clog.Infof(rs.ctx, "WHEP Session %s: Connection state changed to %s", sessionID, state.String())
 		if state == webrtc.PeerConnectionStateClosed || state == webrtc.PeerConnectionStateFailed {
 			rs.cleanupWHEPSession(sessionID)
 		}
@@ -274,7 +280,7 @@ func (rs *RelayServer) CreateWHEPSession(body []byte, contentType string, stream
 	rs.egress = append(rs.egress, session)
 	rs.mu.Unlock()
 
-	log.Printf("Created WHEP session: %s", sessionID)
+	clog.Infof(rs.ctx, "Created WHEP session: %s", sessionID)
 
 	return sessionID, answer.SDP, http.StatusCreated, nil
 }
@@ -332,7 +338,7 @@ func (rs *RelayServer) createLocalTrackForWHEPSession(session *WHEPSession, trac
 	// Store the local track
 	session.LocalTracks[trackKind] = localTrack
 
-	log.Printf("Created local track for WHEP session %s: %s (%s)", session.ID, trackKind, codec.MimeType)
+	clog.Infof(rs.ctx, "Created local track for WHEP session %s: %s (%s)", session.ID, trackKind, codec.MimeType)
 	return nil
 }
 
@@ -370,7 +376,7 @@ func (rs *RelayServer) createGenericLocalTrack(session *WHEPSession, codecType w
 	// Store the local track
 	session.LocalTracks[trackKind] = localTrack
 
-	log.Printf("Created generic local track for WHEP session %s: %s (%s)", session.ID, trackKind, capability.MimeType)
+	clog.Infof(rs.ctx, "Created generic local track for WHEP session %s: %s (%s)", session.ID, trackKind, capability.MimeType)
 	return nil
 }
 
@@ -385,7 +391,7 @@ func (rs *RelayServer) createLocalTracksForExistingWHEPSessions(remoteTrack *web
 		if _, exists := session.LocalTracks[trackKind]; !exists {
 			err := rs.createLocalTrackForWHEPSession(session, trackKind, remoteTrack)
 			if err != nil {
-				log.Printf("Failed to create local track for existing WHEP session %s: %v", session.ID, err)
+				clog.Infof(rs.ctx, "Failed to create local track for existing WHEP session %s: %v", session.ID, err)
 			}
 		}
 		session.mu.Unlock()
@@ -402,7 +408,7 @@ func (rs *RelayServer) relayToWHEPSessions(rtp *rtp.Packet, trackKind string) {
 		if localTrack, exists := session.LocalTracks[trackKind]; exists {
 			err := localTrack.WriteRTP(rtp)
 			if err != nil {
-				log.Printf("Error writing RTP to WHEP session %s: %v", session.ID, err)
+				clog.Infof(rs.ctx, "Error writing RTP to WHEP session %s: %v", session.ID, err)
 			} else {
 				rs.stats.mu.Lock()
 				rs.stats.PacketsTransmitted++
@@ -410,7 +416,7 @@ func (rs *RelayServer) relayToWHEPSessions(rtp *rtp.Packet, trackKind string) {
 				rs.stats.mu.Unlock()
 			}
 		} else {
-			log.Printf("Local track %s not found in WHEP session %s", trackKind, session.ID)
+			clog.Infof(rs.ctx, "Local track %s not found in WHEP session %s", trackKind, session.ID)
 		}
 		session.mu.RUnlock()
 	}
@@ -484,8 +490,13 @@ func (rs *RelayServer) cleanupWHIPSession() {
 		rs.ingress.PeerConn.Close()
 	}
 
-	log.Printf("Cleaned up WHIP session: %s", rs.ingress.ID)
+	clog.Infof(rs.ctx, "Cleaned up WHIP session: %s", rs.ingress.ID)
 	rs.ingress = &WHIPSession{} // Reset the session
+
+	if len(rs.egress) == 0 {
+		clog.Infof(rs.ctx, "All sessions cleaned up, stopping relay server")
+		rs.ctx.Done()
+	}
 }
 
 func (rs *RelayServer) cleanupWHEPSessions() {
@@ -494,44 +505,61 @@ func (rs *RelayServer) cleanupWHEPSessions() {
 
 	for i := len(rs.egress) - 1; i >= 0; i-- {
 		session := rs.egress[i]
+		session.mu.Lock()
 		if session.PeerConn != nil {
 			session.PeerConn.Close()
 		}
-		log.Printf("Cleaned up WHEP session: %s", session.ID)
+		clog.Infof(rs.ctx, "Cleaned up WHEP session: %s", session.ID)
+		session.mu.Unlock()
 		rs.egress = append(rs.egress[:i], rs.egress[i+1:]...)
 	}
+
+	if len(rs.egress) == 0 && rs.ingress.ID == "" {
+		clog.Infof(rs.ctx, "All sessions cleaned up, stopping relay server")
+		rs.ctx.Done()
+	}
+
 }
 
 func (rs *RelayServer) cleanupWHEPSession(sessionID string) {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
+	var sessions []*WHEPSession
 	for i, session := range rs.egress {
 		if session.ID == sessionID {
 			if session.PeerConn != nil {
 				session.PeerConn.Close()
 			}
 			rs.egress = append(rs.egress[:i], rs.egress[i+1:]...)
-			log.Printf("Cleaned up WHEP session: %s", sessionID)
+			clog.Infof(rs.ctx, "Cleaned up WHEP session: %s", sessionID)
 			break
+		} else {
+			sessions = append(sessions, session)
 		}
+	}
+	rs.egress = sessions // Update the egress sessions list
+
+	if len(rs.egress) == 0 && rs.ingress.ID == "" {
+		clog.Infof(rs.ctx, "All sessions cleaned up, stopping relay server")
+		rs.ctx.Done()
 	}
 }
 
 func (rs *RelayServer) relayAndTransformTrack(sessionID string, track *webrtc.TrackRemote, sessionType string) {
-	glog.Infof("Starting relay and transform for track %s from %s session %s", track.Kind().String(), sessionType, sessionID)
+	clog.Infof(rs.ctx, "Starting relay and transform for track %s from %s session %s", track.Kind().String(), sessionType, sessionID)
 
 	trackKind := track.Kind().String()
 
 	// Read and process RTP packets
 	for {
 		rtp, _, err := track.ReadRTP()
-		//glog.Infof("Reading RTP packet for track %s from %s session %s", trackKind, sessionType, sessionID)
+		//clog.Infof(rs.ctx, "Reading RTP packet for track %s from %s session %s", trackKind, sessionType, sessionID)
 		if err != nil {
 			if err == io.EOF {
-				log.Printf("Track %s from %s session %s ended", trackKind, sessionType, sessionID)
+				clog.Infof(rs.ctx, "Track %s from %s session %s ended", trackKind, sessionType, sessionID)
 				return
 			}
-			log.Printf("Error reading RTP: %v", err)
+			clog.Infof(rs.ctx, "Error reading RTP: %v", err)
 			continue
 		}
 
@@ -568,7 +596,7 @@ func (rs *RelayServer) StreamStats(streamID string) interface{} {
 
 	jsonBytes, err := json.Marshal(stats)
 	if err != nil {
-		glog.Infof("Error marshalling stats: %v", err)
+		clog.Infof(rs.ctx, "Error marshalling stats: %v", err)
 		return nil
 	}
 	return jsonBytes
@@ -597,7 +625,7 @@ func (rs *RelayServer) StreamStatus(streamID string) interface{} {
 
 	jsonBytes, err := json.Marshal(sessions)
 	if err != nil {
-		glog.Infof("Error marshalling session data: %v", err)
+		clog.Infof(rs.ctx, "Error marshalling session data: %v", err)
 		return nil
 	}
 
