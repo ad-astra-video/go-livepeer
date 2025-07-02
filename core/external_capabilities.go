@@ -60,22 +60,7 @@ func NewExternalCapabilities() *ExternalCapabilities {
 		Streams:      make(map[string]*StreamData),
 	}
 
-	// Start a ticker to run stream monitoring every minute
-	go extCaps.StartStreamMonitor()
-
 	return extCaps
-}
-
-func (extCaps *ExternalCapabilities) StartStreamMonitor() {
-	ticker := time.NewTicker(1 * time.Minute)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			glog.Infof("Running stream monitor at %s", time.Now().Format(time.RFC3339))
-		}
-	}
 }
 
 func (extCaps *ExternalCapabilities) StopStream(streamID string) error {

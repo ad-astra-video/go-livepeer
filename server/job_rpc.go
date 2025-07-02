@@ -743,17 +743,31 @@ func (ls *LivepeerServer) submitJob(ctx context.Context, w http.ResponseWriter, 
 
 	//get pool of Orchestrators that can do the job
 	// for starting streams: find and orchestrator to run the stream
-	// for running streams: refresh orch token for the orchestrator that is currently serving the stream
+	// for running streams: use the orchestrator that is currently serving the stream
 	// for non-streams: get the orchestrators that can do the job based on capability
 	var (
-		orchs        []JobToken
-		overrideUrls []string
+		orchs       []JobToken
+		streamOrchs []JobToken
 	)
 
+	//running streams: use the orchestrator that is currently serving the stream
 	if jobReqDetails.StartStreamOutput || jobReqDetails.StopStream {
 		orchStream, ok := ls.LivepeerNode.ExternalCapabilities.Streams[jobReqDetails.StreamID]
 		if ok {
-			overrideUrls = append(overrideUrls, orchStream.OrchUrl)
+			//these requests are free so no token is needed.
+			// using a price of 0 skips payment creation
+			streamOrchs = append(orchs, JobToken{
+				ServiceAddr: orchStream.OrchUrl,
+				SenderAddress: &JobSender{
+					Addr: jobReq.Sender,
+					Sig:  jobReq.Sig,
+				},
+				TicketParams: nil,
+				Price: &net.PriceInfo{
+					PricePerUnit:  0,
+					PixelsPerUnit: 1,
+				},
+			})
 		} else {
 			clog.Errorf(ctx, "Stream not found %v", jobReqDetails.StreamID)
 			http.Error(w, fmt.Sprintf("Stream not found %v", jobReqDetails.StreamID), http.StatusServiceUnavailable)
@@ -772,11 +786,17 @@ func (ls *LivepeerServer) submitJob(ctx context.Context, w http.ResponseWriter, 
 		}
 	}
 
-	orchs, err = getJobOrchestrators(ctx, ls.LivepeerNode, jobReq.Capability, jobReq.orchSearchTimeout, jobReq.orchSearchRespTimeout, overrideUrls)
-	if err != nil {
-		clog.Errorf(ctx, "Unable to find orchestrators for capability %v err=%v", jobReq.Capability, err)
-		http.Error(w, fmt.Sprintf("Unable to find orchestrators for capability %v err=%v", jobReq.Capability, err), http.StatusBadRequest)
-		return
+	if len(streamOrchs) == 0 {
+		//get orchestrators for the job request capability
+		orchs, err = getJobOrchestrators(ctx, ls.LivepeerNode, jobReq.Capability, jobReq.orchSearchTimeout, jobReq.orchSearchRespTimeout, nil)
+		if err != nil {
+			clog.Errorf(ctx, "Unable to find orchestrators for capability %v err=%v", jobReq.Capability, err)
+			http.Error(w, fmt.Sprintf("Unable to find orchestrators for capability %v err=%v", jobReq.Capability, err), http.StatusBadRequest)
+			return
+		}
+	} else {
+		//if we have stream orchestrators, use them
+		orchs = streamOrchs
 	}
 
 	if len(orchs) == 0 {
@@ -1392,6 +1412,10 @@ func createPayment(ctx context.Context, jobReq *JobRequest, orchToken JobToken, 
 }
 
 func updateGatewayBalance(node *core.LivepeerNode, orchToken JobToken, capability string, took time.Duration) *big.Rat {
+	if orchToken.TicketParams == nil {
+		return big.NewRat(0, 1) //no payment required
+	}
+
 	orchAddr := ethcommon.BytesToAddress(orchToken.TicketParams.Recipient)
 	// update for usage of compute
 	orchPrice := big.NewRat(orchToken.Price.PricePerUnit, orchToken.Price.PixelsPerUnit)
