@@ -74,7 +74,7 @@ type JobRequest struct {
 type JobRequestDetails struct {
 	StartStream       bool   `json:"start_stream,omitempty"`
 	StartStreamOutput bool   `json:"start_stream_output,omitempty"`
-	StopStream        bool   `json:"stop_stream,omitempty"` //if true, the stream will be stopped and removed from the orchestrator
+	StopStream        bool   `json:"stop_stream,omitempty"`
 	StreamID          string `json:"stream_id,omitempty"`
 }
 
@@ -276,6 +276,78 @@ func (ls *LivepeerServer) SubmitJob() http.Handler {
 	})
 }
 
+// ProcessStreamStatus processes a request for stream status
+// Gateway forwards to the Orchestrator serving the stream
+func (ls *LivepeerServer) ProcessStreamStatus(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	streamID := strings.TrimPrefix(r.URL.Path, "/process/stream/status/")
+	ctx = clog.AddVal(ctx, "streamID", streamID)
+
+	stream, exists := ls.LivepeerNode.ExternalCapabilities.Streams[streamID]
+	if !exists {
+		http.Error(w, fmt.Sprintf("Stream %s not found", streamID), http.StatusNotFound)
+		return
+	}
+
+	orchUrl := stream.OrchUrl
+	if orchUrl == "" {
+		clog.V(6).InfofErr(ctx, "Stream does not have an orchestrator URL")
+		http.Error(w, fmt.Sprintf("Stream %s does not have an orchestrator URL", streamID), http.StatusNotFound)
+		return
+	}
+
+	defer r.Body.Close()
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		clog.V(6).InfofErr(ctx, "Error reading request body: %v", err)
+		http.Error(w, "Error reading request body", http.StatusBadRequest)
+		return
+	}
+
+	req, err := http.NewRequestWithContext(ctx, r.Method, orchUrl+r.URL.Path, bytes.NewBuffer(body))
+	if err != nil {
+		clog.Errorf(ctx, "Unable to create request err=%v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	req.Header.Add("Content-Length", r.Header.Get("Content-Length"))
+	req.Header.Add("Content-Type", r.Header.Get("Content-Type"))
+
+	resp, err := sendReqWithTimeout(req, 30*time.Second)
+	if err != nil {
+		clog.Errorf(ctx, "Error sending request to orchestrator err=%v", err)
+		http.Error(w, fmt.Sprintf("Error sending request to orchestrator err=%v", err), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		clog.Errorf(ctx, "Error reading response body: %v", err)
+		http.Error(w, "Error reading response body", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(resp.StatusCode)
+	w.Write(respBody)
+}
+
+// Orchestrator handler for stream status
+func (h *lphttp) ProcessStreamStatus(w http.ResponseWriter, r *http.Request) {
+	streamID := strings.TrimPrefix(r.URL.Path, "/process/stream/status/")
+
+	stream, exists := h.node.ExternalCapabilities.Streams[streamID]
+	if !exists {
+		http.Error(w, fmt.Sprintf("Stream %s not found", streamID), http.StatusNotFound)
+		return
+	}
+
+	stats := stream.StreamRelayServer.(*RelayServer).StreamStats()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(stats)
+}
+
 // ProcessRequestWHIPUpdate processes a WHIP update request for a source stream (can be update and delete)
 // Gateway forwards to the Orchestrator serving the stream
 func (ls *LivepeerServer) ProcessStreamWHIPUpdate(w http.ResponseWriter, r *http.Request) {
@@ -306,9 +378,6 @@ func (ls *LivepeerServer) ProcessStreamWHIPUpdate(w http.ResponseWriter, r *http
 	}
 
 	req, err := http.NewRequestWithContext(ctx, r.Method, orchUrl+r.URL.Path, bytes.NewBuffer(body))
-	req.Header.Add("Content-Length", r.Header.Get("Content-Length"))
-	req.Header.Add("Content-Type", r.Header.Get("Content-Type"))
-
 	if err != nil {
 		clog.Errorf(ctx, "Unable to create request err=%v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -317,6 +386,7 @@ func (ls *LivepeerServer) ProcessStreamWHIPUpdate(w http.ResponseWriter, r *http
 	// set the headers
 	req.Header.Add("Content-Length", r.Header.Get("Content-Length"))
 	req.Header.Add("Content-Type", r.Header.Get("Content-Type"))
+
 	resp, err := sendReqWithTimeout(req, 30*time.Second)
 	if err != nil {
 		clog.Errorf(ctx, "Error sending request to orchestrator err=%v", err)
@@ -416,17 +486,16 @@ func (ls *LivepeerServer) ProcessStreamWHEPUpdate(w http.ResponseWriter, r *http
 	}
 
 	req, err := http.NewRequestWithContext(ctx, r.Method, orchUrl+r.URL.Path, bytes.NewBuffer(body))
-	req.Header.Add("Content-Length", r.Header.Get("Content-Length"))
-	req.Header.Add("Content-Type", r.Header.Get("Content-Type"))
-
 	if err != nil {
 		clog.Errorf(ctx, "Unable to create request err=%v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
 	// set the headers
 	req.Header.Add("Content-Length", r.Header.Get("Content-Length"))
 	req.Header.Add("Content-Type", r.Header.Get("Content-Type"))
+
 	resp, err := sendReqWithTimeout(req, 30*time.Second)
 	if err != nil {
 		clog.Errorf(ctx, "Error sending request to orchestrator err=%v", err)
@@ -1103,6 +1172,11 @@ func processJob(ctx context.Context, h *lphttp, w http.ResponseWriter, r *http.R
 			http.Error(w, fmt.Sprintf("Stream %s not found", jobReqDetails.StreamID), http.StatusNotFound)
 			return
 		}
+		//send indication to ingress relay server that stream is starting
+		stream.StreamRelayServer.(*RelayServer).SendStreamStartIndication()
+		stream.StreamRelayServer.(*RelayServer).SendPictureLossIndication()
+		//stream.WorkerRelayServer.(*RelayServer).SendStreamStartIndication()
+		//stream.WorkerRelayServer.(*RelayServer).SendPictureLossIndication()
 
 		var (
 			answer     string
@@ -1132,6 +1206,7 @@ func processJob(ctx context.Context, h *lphttp, w http.ResponseWriter, r *http.R
 
 	if jobReqDetails.StopStream {
 		//remove the stream from the external capabilities
+		// capacity is released below
 		if _, ok := h.node.ExternalCapabilities.Streams[jobReqDetails.StreamID]; ok {
 			err := h.node.ExternalCapabilities.StopStream(jobReqDetails.StreamID)
 			if err != nil {
@@ -1140,7 +1215,17 @@ func processJob(ctx context.Context, h *lphttp, w http.ResponseWriter, r *http.R
 				return
 			}
 			clog.Infof(ctx, "Stream %s stopped successfully", jobReqDetails.StreamID)
-			orch.FreeExternalCapabilityCapacity(jobReq.Capability)
+
+			err = h.orchestrator.FreeExternalCapabilityCapacity(jobReq.Capability)
+			if err != nil {
+				clog.Errorf(ctx, "Error freeing external capability capacity: %v", err)
+				http.Error(w, fmt.Sprintf("Error freeing external capability capacity: %v", err), http.StatusInternalServerError)
+				return
+			}
+		} else {
+			clog.Errorf(ctx, "Stream %s not found", jobReqDetails.StreamID)
+			http.Error(w, fmt.Sprintf("Stream %s not found", jobReqDetails.StreamID), http.StatusNotFound)
+			return
 		}
 	}
 
@@ -1189,7 +1274,8 @@ func processJob(ctx context.Context, h *lphttp, w http.ResponseWriter, r *http.R
 	//release capacity for another request if not starting a stream
 	// if requester closes the connection need to release capacity
 	// if starting a stream or stream output, capacity is released when the stream is stopped
-	if !jobReqDetails.StartStream && !jobReqDetails.StartStreamOutput {
+	if !jobReqDetails.StartStream && jobReqDetails.StreamID == "" {
+		clog.Infof(ctx, "releasing capacity for capability %v", jobReq.Capability)
 		defer orch.FreeExternalCapabilityCapacity(jobReq.Capability)
 	}
 
@@ -1564,7 +1650,8 @@ func verifyJobCreds(ctx context.Context, orch Orchestrator, jobCreds string) (*J
 		}
 
 		//do not reserve capacity for a stream, handled manually in processJob
-		if !jobReqDetails.StartStream || jobReqDetails.StreamID != "" {
+		if !jobReqDetails.StartStream && jobReqDetails.StreamID == "" {
+			glog.Infof("reserving capacity for capability %v %s %s %s", jobData.Capability, jobReqDetails.StreamID, jobReqDetails.StartStream, jobReqDetails.StartStreamOutput)
 			if orch.ReserveExternalCapabilityCapacity(jobData.Capability) != nil {
 				return nil, nil, errZeroCapacity
 			}
