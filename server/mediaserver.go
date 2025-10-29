@@ -156,7 +156,8 @@ type authWebhookResponse struct {
 	//AI processing on stream
 	UseAIProcessing      bool            `json:"useAIProcessing"`
 	AICapability         string          `json:"aiCapability"`
-	AIProcessingSettings json.RawMessage `json:"aiProcessingSettings"`
+	AIProcessingSettings JobRequest      `json:"aiProcessingSettings"`
+	AIProcessingParams   json.RawMessage `json:"aiProcessingParams"`
 }
 
 func NewLivepeerServer(ctx context.Context, rtmpAddr string, lpNode *core.LivepeerNode, httpIngest bool, transcodingOptions string) (*LivepeerServer, error) {
@@ -963,51 +964,37 @@ func (s *LivepeerServer) HandlePush(w http.ResponseWriter, r *http.Request) {
 			r.Header.Get("Content-Duration"), r.Header.Get("Content-Resolution"), time.Since(now))
 	}(now)
 
+	// Create AI pipeline if needed and doesn't exist
+	// This allows HTTP push to use AI processing alongside traditional transcoding
+	var aiParams *aiRequestParams
 	if authHeaderConfig.UseAIProcessing && authHeaderConfig.AICapability != "" {
-		_, exists := s.LivepeerNode.LivePipelines[string(mid)]
+		stream, exists := s.LivepeerNode.LivePipelines[string(mid)]
 		if !exists {
-			//params set with ingest types:
-			// RTMP
-			//   kickInput will kick the input from MediaMTX to force a reconnect
-			//   localRTMPPrefix mediaMTXInputURL matches to get the ingest from MediaMTX
-			// WHIP
-			//   kickInput will close the whip connection
-			//   localRTMPPrefix set by ENV variable LIVE_AI_PLAYBACK_HOST
+			// Create AI processing pipeline for HTTP push using setupGatewayJobFromData
 			midStr := string(mid)
-			sendErrorEvent := LiveErrorEventSender(ctx, midStr, map[string]string{
-				"type":        "error",
-				"request_id":  midStr,
-				"stream_id":   midStr,
-				"pipeline_id": "transcoding",
-				"pipeline":    authHeaderConfig.AICapability,
-			})
-			ssr := media.NewSwitchableSegmentReader() //this converts ingest to segments to send to Orchestrator
-			params := aiRequestParams{
-				node:        s.LivepeerNode,
-				os:          drivers.NodeStorage.NewSession(midStr),
-				sessManager: nil,
 
-				//rtmpOutputs:            rtmpOutputs,
-				liveParams: &liveRequestParams{
-					segmentReader:          ssr,
-					startTime:              time.Now(),
-					stream:                 midStr, //live video to video uses stream name, byoc combines to one id
-					paymentProcessInterval: s.livePaymentInterval,
-					outSegmentTimeout:      s.outSegmentTimeout,
-					requestID:              midStr,
-					streamID:               midStr,
-					pipelineID:             "transcoding",
-					pipeline:               authHeaderConfig.AICapability,
-					sendErrorEvent:         sendErrorEvent,
-					manifestID:             authHeaderConfig.AICapability, //byoc uses one balance per capability name
-				},
+			err := s.startAIStreamForTranscoding(ctx, midStr, authHeaderConfig.AIProcessingSettings, authHeaderConfig.AIProcessingParams)
+			if err != nil {
+				clog.Errorf(ctx, "Failed to create AI pipeline: %v", err)
+			} else {
+				// Retrieve the created params
+				stream, exists := s.LivepeerNode.LivePipelines[midStr]
+				if exists {
+					params, err := getStreamRequestParams(stream)
+					if err == nil {
+						aiParams = &params
+						clog.Infof(ctx, "Created AI pipeline for HTTP push manifestID=%s capability=%s", mid, authHeaderConfig.AICapability)
+					}
+				}
 			}
-
-			s.LivepeerNode.NewLivePipeline(midStr, midStr, authHeaderConfig.AICapability, params, authHeaderConfig.AIProcessingSettings)
-
-			clog.Infof(ctx, "Created AI pipeline to process segments")
-			errorOut(http.StatusBadRequest, "No AI processing pipeline found for manifestID=%s", mid)
-			return
+		} else {
+			// Pipeline already exists, get params
+			params, err := getStreamRequestParams(stream)
+			if err == nil {
+				aiParams = &params
+			} else {
+				clog.Warningf(ctx, "Failed to get existing stream params: %v", err)
+			}
 		}
 	}
 
@@ -1063,15 +1050,145 @@ func (s *LivepeerServer) HandlePush(w http.ResponseWriter, r *http.Request) {
 	}
 	cxn.mu.Unlock()
 
-	// Do the transcoding!
-	urls, err := processSegment(ctx, cxn, seg, &segPar)
-	if err != nil {
-		status := http.StatusInternalServerError
-		if isNonRetryableError(err) {
-			status = http.StatusUnprocessableEntity
+	// Do the transcoding and AI processing in parallel if AI is enabled
+	var urls []string
+	var aiSegmentData []byte
+	var aiIsJSON bool
+
+	if aiParams != nil {
+		// Process transcoding and AI in parallel
+		type transcodingResult struct {
+			urls []string
+			err  error
 		}
-		errorOut(status, "http push error processing segment url=%s manifestID=%s err=%q", r.URL, mid, err)
-		return
+		type aiResult struct {
+			data   []byte
+			isJSON bool
+			err    error
+		}
+
+		transcodingChan := make(chan transcodingResult, 1)
+		aiChan := make(chan aiResult, 1)
+
+		// Run transcoding in parallel
+		go func() {
+			urls, err := processSegment(ctx, cxn, seg, &segPar)
+			transcodingChan <- transcodingResult{urls: urls, err: err}
+		}()
+
+		// Run AI processing in parallel
+		go func() {
+			// Feed segment to AI pipeline
+			if aiParams.liveParams != nil && aiParams.liveParams.segmentReader != nil {
+				// Wrap segment data as CloneableReader
+				mediaWriter := media.NewMediaWriter()
+				go func() {
+					defer mediaWriter.Close()
+					mediaWriter.Write(seg.Data)
+				}()
+
+				// Feed to segment reader which will trigger AI processing
+				aiParams.liveParams.segmentReader.Read(mediaWriter.MakeReader())
+
+				// Wait for AI-processed result - check both video and data outputs
+				var videoData []byte
+				var dataOutput []byte
+				var videoErr, dataErr error
+
+				// Check for video output (MPEG-TS from subscriber)
+				if aiParams.liveParams.videoSegmentWriter != nil {
+					segmentReader := aiParams.liveParams.videoSegmentWriter.MakeReader(media.SegmentReaderConfig{})
+					reader, err := segmentReader.Next()
+					if err != nil {
+						videoErr = fmt.Errorf("failed to get AI video segment: %w", err)
+					} else {
+						buf := &bytes.Buffer{}
+						_, err = io.Copy(buf, reader)
+						if err != nil {
+							videoErr = fmt.Errorf("failed to read AI video segment: %w", err)
+						} else {
+							videoData = buf.Bytes()
+						}
+					}
+				}
+
+				// Check for data output (JSON from data channel)
+				if aiParams.liveParams.dataWriter != nil {
+					dataReader := aiParams.liveParams.dataWriter.MakeReader(media.SegmentReaderConfig{})
+					reader, err := dataReader.Next()
+					if err != nil {
+						dataErr = fmt.Errorf("failed to get AI data output: %w", err)
+					} else {
+						buf := &bytes.Buffer{}
+						_, err = io.Copy(buf, reader)
+						if err != nil {
+							dataErr = fmt.Errorf("failed to read AI data output: %w", err)
+						} else {
+							dataOutput = buf.Bytes()
+						}
+					}
+				}
+
+				// Return results - prefer video data if available, otherwise data output
+				if len(videoData) > 0 {
+					aiChan <- aiResult{data: videoData, isJSON: false, err: nil}
+				} else if len(dataOutput) > 0 {
+					aiChan <- aiResult{data: dataOutput, isJSON: true, err: nil}
+				} else if videoErr != nil {
+					aiChan <- aiResult{err: videoErr}
+				} else if dataErr != nil {
+					aiChan <- aiResult{err: dataErr}
+				} else {
+					aiChan <- aiResult{err: nil} // No outputs configured
+				}
+			} else {
+				aiChan <- aiResult{err: fmt.Errorf("AI params not properly initialized")}
+			}
+		}()
+
+		// Wait for transcoding result first (required)
+		transcodingRes := <-transcodingChan
+
+		if transcodingRes.err != nil {
+			status := http.StatusInternalServerError
+			if isNonRetryableError(transcodingRes.err) {
+				status = http.StatusUnprocessableEntity
+			}
+			errorOut(status, "http push error processing segment url=%s manifestID=%s err=%q", r.URL, mid, transcodingRes.err)
+			return
+		}
+
+		urls = transcodingRes.urls
+
+		// Wait for AI result with timeout (half of segment duration)
+		aiTimeout := time.Duration(duration/2) * time.Millisecond
+		if aiTimeout < 100*time.Millisecond {
+			aiTimeout = 100 * time.Millisecond // Minimum timeout
+		}
+
+		select {
+		case aiRes := <-aiChan:
+			if aiRes.err != nil {
+				clog.Warningf(ctx, "AI processing failed (continuing with transcoding): %v", aiRes.err)
+			} else if len(aiRes.data) > 0 {
+				aiSegmentData = aiRes.data
+				aiIsJSON = aiRes.isJSON
+				clog.Infof(ctx, "AI processing completed successfully, got %d bytes (isJSON=%v)", len(aiSegmentData), aiIsJSON)
+			}
+		case <-time.After(aiTimeout):
+			clog.Warningf(ctx, "AI processing timed out after %v (continuing with transcoding)", aiTimeout)
+		}
+	} else {
+		// No AI processing, just do transcoding
+		urls, err = processSegment(ctx, cxn, seg, &segPar)
+		if err != nil {
+			status := http.StatusInternalServerError
+			if isNonRetryableError(err) {
+				status = http.StatusUnprocessableEntity
+			}
+			errorOut(status, "http push error processing segment url=%s manifestID=%s err=%q", r.URL, mid, err)
+			return
+		}
 	}
 	select {
 	case <-r.Context().Done():
@@ -1100,6 +1217,13 @@ func (s *LivepeerServer) HandlePush(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+
+	// Add AI-processed segment as an additional rendition if available
+	if len(aiSegmentData) > 0 {
+		clog.Infof(ctx, "Adding AI-processed segment (%d bytes) to multipart response", len(aiSegmentData))
+		urls = append(urls, "") // Add empty URL for AI rendition
+		renditionData = append(renditionData, aiSegmentData)
+	}
 	clog.Infof(ctx, "Finished transcoding push request at url=%s took=%s", r.URL.String(), time.Since(now))
 
 	boundary := common.RandName()
@@ -1120,22 +1244,42 @@ func (s *LivepeerServer) HandlePush(w http.ResponseWriter, r *http.Request) {
 	for i, url := range urls {
 		mw.SetBoundary(boundary)
 		var typ, ext string
+		var profile string
 		length := len(renditionData[i])
+
+		// Check if this is the AI-processed rendition (last item if AI was used)
+		isAIRendition := len(aiSegmentData) > 0 && i == len(urls)-1
+
 		if length == 0 {
 			typ, ext, length = "application/vnd+livepeer.uri", ".txt", len(url)
 		} else {
-			format := cxn.params.Profiles[i].Format
-			ext, err = common.ProfileFormatExtension(format)
-			if err != nil {
-				clog.Errorf(ctx, "Unknown extension for format err=%q", err)
-				break
-			}
-			typ, err = common.ProfileFormatMimeType(format)
-			if err != nil {
-				clog.Errorf(ctx, "Unknown mime type for format url=%s err=%q ", r.URL, err)
+			if isAIRendition {
+				// AI-processed output - check if it's JSON or video
+				if aiIsJSON {
+					typ = "application/json"
+					ext = ".json"
+					profile = "ai-data"
+				} else {
+					// Video output from subscriber (MPEG-TS)
+					typ = "video/mp2t"
+					ext = ".ts"
+					profile = "ai-video"
+				}
+			} else {
+				format := cxn.params.Profiles[i].Format
+				profile = cxn.params.Profiles[i].Name
+				ext, err = common.ProfileFormatExtension(format)
+				if err != nil {
+					clog.Errorf(ctx, "Unknown extension for format err=%q", err)
+					break
+				}
+				typ, err = common.ProfileFormatMimeType(format)
+				if err != nil {
+					clog.Errorf(ctx, "Unknown mime type for format url=%s err=%q ", r.URL, err)
+				}
 			}
 		}
-		profile := cxn.params.Profiles[i].Name
+
 		fname := fmt.Sprintf(`"%s_%d%s"`, profile, seq, ext)
 		hdrs := textproto.MIMEHeader{
 			"Content-Type":        {typ + "; name=" + fname},

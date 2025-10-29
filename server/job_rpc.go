@@ -289,10 +289,57 @@ func (h *lphttp) GetJobToken(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(jobToken)
 }
 
-func (ls *LivepeerServer) setupGatewayJob(ctx context.Context, r *http.Request, skipOrchSearch bool) (*gatewayJob, error) {
-
+// setupGatewayJobFromData creates a gatewayJob from parsed job data
+// This accepts pre-decoded/parsed data that can come from HTTP headers or auth webhook responses
+func (ls *LivepeerServer) setupGatewayJobFromData(ctx context.Context, jobReq *JobRequest, searchTimeout, respTimeout time.Duration, skipOrchSearch bool) (*gatewayJob, error) {
 	var orchs []core.JobToken
 
+	clog.Infof(ctx, "processing job request req=%+v", jobReq)
+
+	var jobDetails JobRequestDetails
+	if len(jobReq.Request) > 0 {
+		if err := json.Unmarshal([]byte(jobReq.Request), &jobDetails); err != nil {
+			return nil, errors.New(fmt.Sprintf("Unable to unmarshal job request details err=%v", err))
+		}
+	}
+
+	var jobParams JobParameters
+	if len(jobReq.Parameters) > 0 {
+		if err := json.Unmarshal([]byte(jobReq.Parameters), &jobParams); err != nil {
+			return nil, errors.New(fmt.Sprintf("Unable to unmarshal job parameters err=%v", err))
+		}
+	}
+
+	jobReq.OrchSearchTimeout = searchTimeout
+	jobReq.OrchSearchRespTimeout = respTimeout
+
+	job := orchJob{
+		Req:     jobReq,
+		Details: &jobDetails,
+		Params:  &jobParams,
+	}
+
+	// get list of Orchestrators that can do the job if needed
+	// (e.g. stop requests don't need new list of orchestrators)
+	gJob := &gatewayJob{
+		Job:   &job,
+		Orchs: orchs,
+		node:  ls.LivepeerNode,
+	}
+	if !skipOrchSearch {
+		orchs, err := getJobOrchestrators(ctx, ls.LivepeerNode, jobReq.Capability, jobParams, jobReq.OrchSearchTimeout, jobReq.OrchSearchRespTimeout)
+		if err != nil {
+			return nil, err
+		}
+
+		gJob.Orchs = orchs
+	}
+
+	return gJob, nil
+}
+
+// setupGatewayJob creates a gatewayJob from HTTP request headers
+func (ls *LivepeerServer) setupGatewayJob(ctx context.Context, r *http.Request, skipOrchSearch bool) (*gatewayJob, error) {
 	jobReqHdr := r.Header.Get(jobRequestHdr)
 	clog.Infof(ctx, "processing job request req=%v", jobReqHdr)
 	jobReq, err := verifyJobCreds(ctx, nil, jobReqHdr, true)
@@ -300,40 +347,9 @@ func (ls *LivepeerServer) setupGatewayJob(ctx context.Context, r *http.Request, 
 		return nil, errors.New(fmt.Sprintf("Unable to parse job request, err=%v", err))
 	}
 
-	var jobDetails JobRequestDetails
-	if err := json.Unmarshal([]byte(jobReq.Request), &jobDetails); err != nil {
-		return nil, errors.New(fmt.Sprintf("Unable to unmarshal job request err=%v", err))
-	}
+	searchTimeout, respTimeout := getOrchSearchTimeouts(ctx, r.Header.Get(jobOrchSearchTimeoutHdr), r.Header.Get(jobOrchSearchRespTimeoutHdr))
 
-	var jobParams JobParameters
-	if err := json.Unmarshal([]byte(jobReq.Parameters), &jobParams); err != nil {
-		return nil, errors.New(fmt.Sprintf("Unable to unmarshal job parameters err=%v", err))
-	}
-
-	// get list of Orchestrators that can do the job if needed
-	// (e.g. stop requests don't need new list of orchestrators)
-	if !skipOrchSearch {
-		searchTimeout, respTimeout := getOrchSearchTimeouts(ctx, r.Header.Get(jobOrchSearchTimeoutHdr), r.Header.Get(jobOrchSearchRespTimeoutHdr))
-		jobReq.OrchSearchTimeout = searchTimeout
-		jobReq.OrchSearchRespTimeout = respTimeout
-
-		//get pool of Orchestrators that can do the job
-		orchs, err = getJobOrchestrators(ctx, ls.LivepeerNode, jobReq.Capability, jobParams, jobReq.OrchSearchTimeout, jobReq.OrchSearchRespTimeout)
-		if err != nil {
-			return nil, errors.New(fmt.Sprintf("Unable to find orchestrators for capability %v err=%v", jobReq.Capability, err))
-		}
-
-		if len(orchs) == 0 {
-			return nil, errors.New(fmt.Sprintf("No orchestrators found for capability %v", jobReq.Capability))
-		}
-	}
-
-	job := orchJob{Req: jobReq,
-		Details: &jobDetails,
-		Params:  &jobParams,
-	}
-
-	return &gatewayJob{Job: &job, Orchs: orchs, node: ls.LivepeerNode}, nil
+	return ls.setupGatewayJobFromData(ctx, jobReq, searchTimeout, respTimeout, skipOrchSearch)
 }
 
 func (h *lphttp) ProcessJob(w http.ResponseWriter, r *http.Request) {

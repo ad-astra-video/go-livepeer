@@ -140,6 +140,9 @@ func TestStartStream_MaxBodyLimit(t *testing.T) {
 	assert.Equal(t, http.StatusRequestEntityTooLarge, w.Code)
 }
 
+// TODO: add a test for StreamStart from POST request to test
+//
+//	streamName+streamID, invalid json body
 func TestStreamStart_SetupStream(t *testing.T) {
 	node := mockJobLivepeerNode()
 	server := httptest.NewServer(http.HandlerFunc(orchTokenHandler))
@@ -164,103 +167,45 @@ func TestStreamStart_SetupStream(t *testing.T) {
 		Capability: "test-capability",
 		Parameters: paramsStr,
 		Timeout:    10,
+		ID:         "streamid",
 	}
-	orchJob := &orchJob{Req: jobReq, Params: &jobParams}
+	orchJob := &orchJob{Req: jobReq, Params: &jobParams, Details: &JobRequestDetails{}}
 	gatewayJob := &gatewayJob{Job: orchJob}
 
-	// Prepare a valid StartRequest body
-	startReq := StartRequest{
-		Stream:     "teststream",
-		RtmpOutput: "rtmp://output",
-		StreamId:   "streamid",
-		Params:     "{}",
-	}
-	body, _ := json.Marshal(startReq)
-	req := httptest.NewRequest(http.MethodPost, "/ai/stream/start", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-
-	urls, code, err := ls.setupStream(context.Background(), req, gatewayJob)
+	params, err := ls.setupStream(context.Background(), gatewayJob, []string{"rtmp://output"}, false, nil)
 	assert.NoError(t, err)
-	assert.Equal(t, http.StatusOK, code)
-	assert.NotNil(t, urls)
-	assert.Equal(t, "teststream-streamid", urls.StreamId)
-	//confirm all urls populated
-	assert.NotEmpty(t, urls.WhipUrl)
-	assert.NotEmpty(t, urls.RtmpUrl)
-	assert.NotEmpty(t, urls.WhepUrl)
-	assert.NotEmpty(t, urls.RtmpOutputUrl)
-	assert.Contains(t, urls.RtmpOutputUrl, "rtmp://output")
-	assert.NotEmpty(t, urls.DataUrl)
-	assert.NotEmpty(t, urls.StatusUrl)
-	assert.NotEmpty(t, urls.UpdateUrl)
+	assert.NotNil(t, params)
+	assert.Equal(t, params.liveParams.streamID, jobReq.ID)
+	assert.Equal(t, params.liveParams.rtmpOutputs, []string{"rtmp://output"})
 
 	//confirm LivePipeline created
-	stream, ok := ls.LivepeerNode.LivePipelines[urls.StreamId]
+	stream, ok := ls.LivepeerNode.LivePipelines[params.liveParams.streamID]
 	assert.True(t, ok)
 	assert.NotNil(t, stream)
-	assert.Equal(t, urls.StreamId, stream.StreamID)
+	assert.Equal(t, params.liveParams.streamID, stream.StreamID)
 	assert.Equal(t, stream.StreamRequest(), []byte("{\"params\":{}}"))
-	params := stream.StreamParams()
-	_, checkParamsType := params.(aiRequestParams)
+	streamParams := stream.StreamParams()
+	_, checkParamsType := streamParams.(aiRequestParams)
 	assert.True(t, checkParamsType)
 
 	//test with no data output
+	gatewayJob.Job.Req.ID = "streamid2"
 	jobParams = JobParameters{EnableVideoIngress: true, EnableVideoEgress: true, EnableDataOutput: false}
 	paramsStr = marshalToString(t, jobParams)
 	jobReq.Parameters = paramsStr
 	gatewayJob.Job.Params = &jobParams
-	req.Body = io.NopCloser(bytes.NewReader(body))
-	urls, code, err = ls.setupStream(context.Background(), req, gatewayJob)
-	assert.Empty(t, urls.DataUrl)
-
-	//test with no video ingress
-	jobParams = JobParameters{EnableVideoIngress: false, EnableVideoEgress: true, EnableDataOutput: true}
-	paramsStr = marshalToString(t, jobParams)
-	jobReq.Parameters = paramsStr
-	gatewayJob.Job.Params = &jobParams
-	req.Body = io.NopCloser(bytes.NewReader(body))
-	urls, code, err = ls.setupStream(context.Background(), req, gatewayJob)
-	assert.Empty(t, urls.WhipUrl)
-	assert.Empty(t, urls.RtmpUrl)
-
-	//test with no video egress
-	jobParams = JobParameters{EnableVideoIngress: true, EnableVideoEgress: false, EnableDataOutput: true}
-	paramsStr = marshalToString(t, jobParams)
-	jobReq.Parameters = paramsStr
-	gatewayJob.Job.Params = &jobParams
-	req.Body = io.NopCloser(bytes.NewReader(body))
-	urls, code, err = ls.setupStream(context.Background(), req, gatewayJob)
-	assert.Empty(t, urls.WhepUrl)
-	assert.Empty(t, urls.RtmpOutputUrl)
+	params, err = ls.setupStream(context.Background(), gatewayJob, nil, false, nil)
+	assert.Nil(t, err)
+	assert.NotNil(t, params)
+	assert.Nil(t, params.liveParams.dataWriter)
 
 	// Test with nil job
-	urls, code, err = ls.setupStream(context.Background(), req, nil)
+	params, err = ls.setupStream(context.Background(), nil, nil, false, nil)
 	assert.Error(t, err)
-	assert.Equal(t, http.StatusBadRequest, code)
-	assert.Nil(t, urls)
+	assert.Nil(t, params)
 
-	// Test with invalid JSON body
-	badReq := httptest.NewRequest(http.MethodPost, "/ai/stream/start", bytes.NewReader([]byte("notjson")))
-	badReq.Header.Set("Content-Type", "application/json")
-	urls, code, err = ls.setupStream(context.Background(), badReq, gatewayJob)
-	assert.Error(t, err)
-	assert.Equal(t, http.StatusBadRequest, code)
-	assert.Nil(t, urls)
-
-	// Test with stream name ending in -out (should return nil, 0, nil)
-	outReq := StartRequest{
-		Stream:     "teststream-out",
-		RtmpOutput: "rtmp://output",
-		StreamId:   "streamid",
-		Params:     "{}",
-	}
-	outBody, _ := json.Marshal(outReq)
-	outReqHTTP := httptest.NewRequest(http.MethodPost, "/ai/stream/start", bytes.NewReader(outBody))
-	outReqHTTP.Header.Set("Content-Type", "application/json")
-	urls, code, err = ls.setupStream(context.Background(), outReqHTTP, gatewayJob)
-	assert.NoError(t, err)
-	assert.Equal(t, 0, code)
-	assert.Nil(t, urls)
+	//confirm two pipelines present
+	assert.Len(t, ls.LivepeerNode.LivePipelines, 2)
 }
 
 func TestRunStream_RunAndCancelStream(t *testing.T) {
@@ -436,6 +381,7 @@ func TestRunStream_RunAndCancelStream(t *testing.T) {
 }
 
 // Test StartStream handler
+// TODO: add tests for urls (with/without video ingress/egress)
 func TestStartStreamHandler(t *testing.T) {
 	node := mockJobLivepeerNode()
 
@@ -510,9 +456,132 @@ func TestStartStreamHandler(t *testing.T) {
 		conn.Close()
 		delete(conns, conn)
 	}
+}
 
-	// Give time for cleanup to complete
-	time.Sleep(50 * time.Millisecond)
+func TestStartStreamHandler_InvalidStreamName(t *testing.T) {
+	node := mockJobLivepeerNode()
+
+	// Set up an lphttp-based orchestrator test server with trickle endpoints
+	mux := http.NewServeMux()
+	ls := &LivepeerServer{
+		LivepeerNode: node,
+	}
+	mockSender := pm.MockSender{}
+	mockSender.On("StartSession", mock.Anything).Return("foo")
+	mockSender.On("CreateTicketBatch", mock.Anything, mock.Anything).Return(mockTicketBatch(10), nil)
+	node.Sender = &mockSender
+	node.Balances = core.NewAddressBalances(1 * time.Second)
+	defer node.Balances.StopCleanup()
+	//setup Orch server stub
+	mux.HandleFunc("/process/token", orchTokenHandler)
+	mux.HandleFunc("/ai/stream/start", orchAIStreamStartHandler)
+
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	// Add a connection state tracker
+	mu := sync.Mutex{}
+	conns := make(map[net.Conn]http.ConnState)
+	server.Config.ConnState = func(conn net.Conn, state http.ConnState) {
+		mu.Lock()
+		defer mu.Unlock()
+
+		conns[conn] = state
+	}
+
+	ls.LivepeerNode.OrchestratorPool = newStubOrchestratorPool(ls.LivepeerNode, []string{server.URL})
+	drivers.NodeStorage = drivers.NewMemoryDriver(nil)
+	// Prepare a valid StartRequest body
+	startReq := StartRequest{
+		Stream:     "teststream-out",
+		RtmpOutput: "rtmp://output",
+		StreamId:   "streamid",
+		Params:     "{}",
+	}
+	body, _ := json.Marshal(startReq)
+	req := httptest.NewRequest(http.MethodPost, "/ai/stream/start", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	req.Header.Set("Livepeer", base64TestJobRequest(10, true, true, true))
+
+	w := httptest.NewRecorder()
+
+	handler := ls.StartStream()
+	handler.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNoContent, w.Code)
+
+	//clean up http connections
+	mu.Lock()
+	defer mu.Unlock()
+	for conn := range conns {
+		conn.Close()
+		delete(conns, conn)
+	}
+}
+
+func TestStartStreamHandler_InvalidStartRequest(t *testing.T) {
+	node := mockJobLivepeerNode()
+
+	// Set up an lphttp-based orchestrator test server with trickle endpoints
+	mux := http.NewServeMux()
+	ls := &LivepeerServer{
+		LivepeerNode: node,
+	}
+	mockSender := pm.MockSender{}
+	mockSender.On("StartSession", mock.Anything).Return("foo")
+	mockSender.On("CreateTicketBatch", mock.Anything, mock.Anything).Return(mockTicketBatch(10), nil)
+	node.Sender = &mockSender
+	node.Balances = core.NewAddressBalances(1 * time.Second)
+	defer node.Balances.StopCleanup()
+	//setup Orch server stub
+	mux.HandleFunc("/process/token", orchTokenHandler)
+	mux.HandleFunc("/ai/stream/start", orchAIStreamStartHandler)
+
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	// Add a connection state tracker
+	mu := sync.Mutex{}
+	conns := make(map[net.Conn]http.ConnState)
+	server.Config.ConnState = func(conn net.Conn, state http.ConnState) {
+		mu.Lock()
+		defer mu.Unlock()
+
+		conns[conn] = state
+	}
+
+	ls.LivepeerNode.OrchestratorPool = newStubOrchestratorPool(ls.LivepeerNode, []string{server.URL})
+	drivers.NodeStorage = drivers.NewMemoryDriver(nil)
+	// send an invalid StartRequest body
+	req := httptest.NewRequest(http.MethodPost, "/ai/stream/start", nil)
+	req.Header.Set("Content-Type", "application/json")
+
+	req.Header.Set("Livepeer", base64TestJobRequest(10, true, true, true))
+
+	w := httptest.NewRecorder()
+
+	handler := ls.StartStream()
+	handler.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	//send a different type of invalid request
+	// send an invalid StartRequest body
+	req = httptest.NewRequest(http.MethodPost, "/ai/stream/start", bytes.NewBuffer([]byte("invalid json")))
+	req.Header.Set("Content-Type", "application/json")
+
+	req.Header.Set("Livepeer", base64TestJobRequest(10, true, true, true))
+
+	w = httptest.NewRecorder()
+	handler = ls.StartStream()
+	handler.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	//clean up http connections
+	mu.Lock()
+	defer mu.Unlock()
+	for conn := range conns {
+		conn.Close()
+		delete(conns, conn)
+	}
 }
 
 // Test StopStream handler
@@ -728,37 +797,26 @@ func TestStartStreamRTMPIngestHandler(t *testing.T) {
 		Capability: "test-capability",
 		Parameters: paramsStr,
 		Timeout:    10,
+		ID:         "teststream-streamid",
 	}
-	orchJob := &orchJob{Req: jobReq, Params: &jobParams}
+	orchJob := &orchJob{Req: jobReq, Params: &jobParams, Details: &JobRequestDetails{}}
 	gatewayJob := &gatewayJob{Job: orchJob}
 
-	// Prepare a valid StartRequest body
-	startReq := StartRequest{
-		Stream:     "teststream",
-		RtmpOutput: "rtmp://output",
-		StreamId:   "streamid",
-		Params:     "{}",
-	}
-	body, _ := json.Marshal(startReq)
-	req := httptest.NewRequest(http.MethodPost, "/ai/stream/start", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-
-	urls, code, err := ls.setupStream(context.Background(), req, gatewayJob)
+	params, err := ls.setupStream(context.Background(), gatewayJob, nil, false, nil)
 	assert.NoError(t, err)
-	assert.Equal(t, http.StatusOK, code)
-	assert.NotNil(t, urls)
-	assert.Equal(t, "teststream-streamid", urls.StreamId) //combination of stream name (Stream) and id (StreamId)
+	assert.NotNil(t, params)
+	assert.Equal(t, "teststream-streamid", params.liveParams.streamID) //combination of stream name (Stream) and id (StreamId)
 
-	stream, ok := ls.LivepeerNode.LivePipelines[urls.StreamId]
+	stream, ok := ls.LivepeerNode.LivePipelines[params.liveParams.streamID]
 	assert.True(t, ok)
 	assert.NotNil(t, stream)
 
-	params, err := getStreamRequestParams(stream)
+	aiParams, err := getStreamRequestParams(stream)
 	assert.NoError(t, err)
 
 	//these should be empty/nil before rtmp ingest starts
-	assert.Empty(t, params.liveParams.localRTMPPrefix)
-	assert.Nil(t, params.liveParams.kickInput)
+	assert.Empty(t, aiParams.liveParams.localRTMPPrefix)
+	assert.Nil(t, aiParams.liveParams.kickInput)
 
 	rtmpReq := httptest.NewRequest(http.MethodPost, "/ai/stream/{streamId}/rtmp", nil)
 	rtmpReq.SetPathValue("streamId", "teststream-streamid")
@@ -810,37 +868,25 @@ func TestStartStreamWhipIngestHandler(t *testing.T) {
 		Capability: "test-capability",
 		Parameters: paramsStr,
 		Timeout:    10,
+		ID:         "teststream-streamid",
 	}
-	orchJob := &orchJob{Req: jobReq, Params: &jobParams}
+	orchJob := &orchJob{Req: jobReq, Params: &jobParams, Details: &JobRequestDetails{}}
 	gatewayJob := &gatewayJob{Job: orchJob}
 
-	// Prepare a valid StartRequest body for /ai/stream/start
-	startReq := StartRequest{
-		Stream:     "teststream",
-		RtmpOutput: "rtmp://output",
-		StreamId:   "streamid",
-		Params:     "{}",
-	}
-	body, _ := json.Marshal(startReq)
-	req := httptest.NewRequest(http.MethodPost, "/ai/stream/start", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-
-	urls, code, err := ls.setupStream(context.Background(), req, gatewayJob)
+	params, err := ls.setupStream(context.Background(), gatewayJob, nil, false, nil)
 	assert.NoError(t, err)
-	assert.Equal(t, http.StatusOK, code)
-	assert.NotNil(t, urls)
-	assert.Equal(t, "teststream-streamid", urls.StreamId) //combination of stream name (Stream) and id (StreamId)
+	assert.NotNil(t, params)
 
-	stream, ok := ls.LivepeerNode.LivePipelines[urls.StreamId]
+	stream, ok := ls.LivepeerNode.LivePipelines[params.liveParams.streamID]
 	assert.True(t, ok)
 	assert.NotNil(t, stream)
 
-	params, err := getStreamRequestParams(stream)
+	aiParams, err := getStreamRequestParams(stream)
 	assert.NoError(t, err)
 
 	//these should be empty/nil before whip ingest starts
-	assert.Empty(t, params.liveParams.localRTMPPrefix)
-	assert.Nil(t, params.liveParams.kickInput)
+	assert.Empty(t, aiParams.liveParams.localRTMPPrefix)
+	assert.Nil(t, aiParams.liveParams.kickInput)
 
 	// whipServer is required, using nil will test setup up to initializing the WHIP connection
 	whipServer := media.NewWHIPServer()
@@ -941,34 +987,22 @@ func TestGetStreamDataHandler(t *testing.T) {
 			Capability: "test-capability",
 			Parameters: paramsStr,
 			Timeout:    10,
+			ID:         "teststream-streamid",
 		}
-		orchJob := &orchJob{Req: jobReq, Params: &jobParams}
+		orchJob := &orchJob{Req: jobReq, Params: &jobParams, Details: &JobRequestDetails{}}
 		gatewayJob := &gatewayJob{Job: orchJob}
 
-		// Prepare a valid StartRequest body for /ai/stream/start
-		startReq := StartRequest{
-			Stream:     "teststream",
-			RtmpOutput: "rtmp://output",
-			StreamId:   "streamid",
-			Params:     "{}",
-		}
-		body, _ := json.Marshal(startReq)
-		req := httptest.NewRequest(http.MethodPost, "/ai/stream/start", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-
-		urls, code, err := ls.setupStream(context.Background(), req, gatewayJob)
+		params, err := ls.setupStream(context.Background(), gatewayJob, nil, false, nil)
 		assert.NoError(t, err)
-		assert.Equal(t, http.StatusOK, code)
-		assert.NotNil(t, urls)
-		assert.Equal(t, "teststream-streamid", urls.StreamId) //combination of stream name (Stream) and id (StreamId)
+		assert.NotNil(t, params)
 
-		stream, ok := ls.LivepeerNode.LivePipelines[urls.StreamId]
+		stream, ok := ls.LivepeerNode.LivePipelines[params.liveParams.streamID]
 		assert.True(t, ok)
 		assert.NotNil(t, stream)
 
-		params, err := getStreamRequestParams(stream)
+		aiParams, err := getStreamRequestParams(stream)
 		assert.NoError(t, err)
-		assert.NotNil(t, params.liveParams)
+		assert.NotNil(t, aiParams.liveParams)
 
 		// Write some test data first
 		writer, err := params.liveParams.dataWriter.Next()

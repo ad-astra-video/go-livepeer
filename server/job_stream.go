@@ -29,6 +29,33 @@ import (
 
 var getNewTokenTimeout = 3 * time.Second
 
+// startAIStreamForTranscoding creates an AI processing pipeline for HTTP push transcoding
+// by calling setupStream directly with the gatewayJob.
+func (ls *LivepeerServer) startAIStreamForTranscoding(ctx context.Context, streamID string, jobReq JobRequest, pipelineParams []byte) error {
+
+	// Use setupGatewayJobFromData with the JobRequest from handlePush
+	searchTimeout := 1 * time.Second
+	respTimeout := 500 * time.Millisecond
+	gatewayJob, err := ls.setupGatewayJobFromData(ctx, &jobReq, searchTimeout, respTimeout, false)
+	if err != nil {
+		return fmt.Errorf("failed to setup gateway job: %w", err)
+	}
+
+	// Ensure ID is set in job request (setupStream will use this as streamID)
+	if gatewayJob.Job.Req.ID == "" {
+		gatewayJob.Job.Req.ID = streamID
+	}
+
+	// Setup the stream directly using gatewayJob
+	// Use videoSegmentWriter=true for synchronous segment retrieval in HTTP push
+	_, err = ls.setupStream(ctx, gatewayJob, []string{}, true, pipelineParams)
+	if err != nil {
+		return fmt.Errorf("failed to setup stream: %w", err)
+	}
+
+	return nil
+}
+
 func (ls *LivepeerServer) StartStream() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodOptions {
@@ -51,10 +78,186 @@ func (ls *LivepeerServer) StartStream() http.Handler {
 
 		//setup body size limit, will error if too large
 		r.Body = http.MaxBytesReader(w, r.Body, 10<<20)
-		streamUrls, code, err := ls.setupStream(ctx, r, gatewayJob)
+
+		requestID := string(core.RandomManifestID())
+		ctx = clog.AddVal(ctx, "request_id", requestID)
+
+		// Read and parse request body
+		bodyBytes, err := io.ReadAll(r.Body)
+		if err != nil {
+			if maxErr, ok := err.(*http.MaxBytesError); ok {
+				clog.Warningf(ctx, "Request body too large (over 10MB)")
+				http.Error(w, fmt.Sprintf("request body too large (max %d bytes)", maxErr.Limit), http.StatusRequestEntityTooLarge)
+				return
+			} else {
+				clog.Errorf(ctx, "Error reading request body: %v", err)
+				http.Error(w, fmt.Sprintf("error reading request body: %v", err), http.StatusBadRequest)
+				return
+			}
+		}
+		r.Body.Close()
+
+		// Decode the StartRequest from JSON body
+		var startReq StartRequest
+		if err := json.NewDecoder(bytes.NewBuffer(bodyBytes)).Decode(&startReq); err != nil {
+			http.Error(w, fmt.Sprintf("invalid JSON request body: %v", err), http.StatusBadRequest)
+			return
+		}
+
+		streamName := startReq.Stream
+		streamRequestTime := time.Now().UnixMilli()
+		ctx = clog.AddVal(ctx, "stream", streamName)
+
+		// Convention to avoid re-subscribing to our own streams
+		if strings.HasSuffix(streamName, "-out") {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		// If auth webhook is set and returns an output URL, this will be replaced
+		outputURL := startReq.RtmpOutput
+
+		// if auth webhook returns pipeline config these will be replaced
+		pipeline := gatewayJob.Job.Req.Capability
+		rawParams := startReq.Params
+		streamID := startReq.StreamId
+
+		var pipelineID string
+		var pipelineParams map[string]interface{}
+		if rawParams != "" {
+			if err := json.Unmarshal([]byte(rawParams), &pipelineParams); err != nil {
+				http.Error(w, "invalid model params", http.StatusBadRequest)
+				return
+			}
+		}
+
+		//ensure a streamid exists and includes the streamName if provided
+		if streamID == "" {
+			streamID = string(core.RandomManifestID())
+		}
+		if streamName != "" {
+			streamID = fmt.Sprintf("%s-%s", streamName, streamID)
+		}
+
+		mediaMtxHost := os.Getenv("LIVE_AI_PLAYBACK_HOST")
+		if mediaMtxHost == "" {
+			mediaMtxHost = "rtmp://localhost:1935"
+		}
+		mediaMTXInputURL := fmt.Sprintf("%s/%s%s", mediaMtxHost, "", streamID)
+		mediaMTXOutputURL := mediaMTXInputURL + "-out"
+		mediaMTXOutputAlias := fmt.Sprintf("%s-%s-out", mediaMTXInputURL, requestID)
+
+		var (
+			whipURL string
+			rtmpURL string
+			whepURL string
+			dataURL string
+		)
+
+		updateURL := fmt.Sprintf("https://%s/ai/stream/%s/%s", ls.LivepeerNode.GatewayHost, streamID, "update")
+		statusURL := fmt.Sprintf("https://%s/ai/stream/%s/%s", ls.LivepeerNode.GatewayHost, streamID, "status")
+
+		if gatewayJob.Job.Params.EnableVideoIngress {
+			whipURL = fmt.Sprintf("https://%s/ai/stream/%s/%s", ls.LivepeerNode.GatewayHost, streamID, "whip")
+			rtmpURL = mediaMTXInputURL
+		}
+		if gatewayJob.Job.Params.EnableVideoEgress {
+			whepURL = generateWhepUrl(streamID, requestID)
+		}
+		if gatewayJob.Job.Params.EnableDataOutput {
+			dataURL = fmt.Sprintf("https://%s/ai/stream/%s/%s", ls.LivepeerNode.GatewayHost, streamID, "data")
+		}
+
+		//if set this will overwrite settings above
+		if LiveAIAuthWebhookURL != nil {
+			authResp, err := authenticateAIStream(LiveAIAuthWebhookURL, ls.liveAIAuthApiKey, AIAuthRequest{
+				Stream:      streamName,
+				Type:        "",
+				QueryParams: rawParams,
+				GatewayHost: ls.LivepeerNode.GatewayHost,
+				WhepURL:     whepURL,
+				UpdateURL:   updateURL,
+				StatusURL:   statusURL,
+			})
+			if err != nil {
+				clog.Errorf(ctx, "live ai auth failed: %v", err)
+				http.Error(w, fmt.Sprintf("live ai auth failed: %v", err), http.StatusForbidden)
+				return
+			}
+
+			if authResp.RTMPOutputURL != "" {
+				outputURL = authResp.RTMPOutputURL
+			}
+
+			if authResp.Pipeline != "" {
+				pipeline = authResp.Pipeline
+			}
+
+			if len(authResp.paramsMap) > 0 {
+				if _, ok := authResp.paramsMap["prompt"]; !ok && pipeline == "comfyui" {
+					pipelineParams = map[string]interface{}{"prompt": authResp.paramsMap}
+				} else {
+					pipelineParams = authResp.paramsMap
+				}
+			}
+
+			if authResp.StreamID != "" {
+				streamID = authResp.StreamID
+			}
+
+			if authResp.PipelineID != "" {
+				pipelineID = authResp.PipelineID
+			}
+		}
+
+		ctx = clog.AddVal(ctx, "stream_id", streamID)
+		clog.Infof(ctx, "Received live video AI request")
+
+		// collect all RTMP outputs
+		var rtmpOutputs []string
+		if gatewayJob.Job.Params.EnableVideoEgress {
+			if outputURL != "" {
+				rtmpOutputs = append(rtmpOutputs, outputURL)
+			}
+			if mediaMTXOutputURL != "" {
+				rtmpOutputs = append(rtmpOutputs, mediaMTXOutputURL, mediaMTXOutputAlias)
+			}
+		}
+
+		clog.Info(ctx, "RTMP outputs", "destinations", rtmpOutputs)
+
+		// Clear any previous gateway status
+		GatewayStatus.Clear(streamID)
+		GatewayStatus.StoreKey(streamID, "whep_url", whepURL)
+
+		monitor.SendQueueEventAsync("stream_trace", map[string]interface{}{
+			"type":        "gateway_receive_stream_request",
+			"timestamp":   streamRequestTime,
+			"stream_id":   streamID,
+			"pipeline_id": pipelineID,
+			"request_id":  requestID,
+			"orchestrator_info": map[string]interface{}{
+				"address": "",
+				"url":     "",
+			},
+		})
+
+		// Prepare pipeline parameters
+		paramsReq := map[string]interface{}{
+			"params": pipelineParams,
+		}
+		paramsReqBytes, _ := json.Marshal(paramsReq)
+
+		// Ensure streamID and requestID are set in gatewayJob
+		gatewayJob.Job.Req.ID = streamID
+		gatewayJob.Job.Req.Capability = pipeline
+
+		// Setup the stream using gatewayJob directly
+		// Streaming mode uses RingBuffer (useVideoSegmentWriter=false), not SegmentWriter
+		_, err = ls.setupStream(ctx, gatewayJob, rtmpOutputs, false, paramsReqBytes)
 		if err != nil {
 			clog.Errorf(ctx, "Error setting up stream: %s", err)
-			http.Error(w, err.Error(), code)
+			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 
@@ -62,15 +265,21 @@ func (ls *LivepeerServer) StartStream() http.Handler {
 
 		go ls.monitorStream(gatewayJob.Job.Req.ID)
 
-		if streamUrls != nil {
-			// Stream started successfully
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(streamUrls)
-		} else {
-			//case where we are subscribing to own streams in setupStream
-			w.WriteHeader(http.StatusNoContent)
+		// Stream started successfully
+		streamUrls := StreamUrls{
+			StreamId:      streamID,
+			WhipUrl:       whipURL,
+			WhepUrl:       whepURL,
+			RtmpUrl:       rtmpURL,
+			RtmpOutputUrl: strings.Join(rtmpOutputs, ","),
+			UpdateUrl:     updateURL,
+			StatusUrl:     statusURL,
+			DataUrl:       dataURL,
 		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(streamUrls)
 	})
 }
 
@@ -400,183 +609,42 @@ type StreamUrls struct {
 	DataUrl       string `json:"data_url"`
 }
 
-func (ls *LivepeerServer) setupStream(ctx context.Context, r *http.Request, job *gatewayJob) (*StreamUrls, int, error) {
-	if job == nil {
-		return nil, http.StatusBadRequest, errors.New("invalid job")
+func (ls *LivepeerServer) setupStream(ctx context.Context, job *gatewayJob, rtmpOutputs []string, useVideoSegmentWriter bool, pipelineParams []byte) (*aiRequestParams, error) {
+	if job == nil || job.Job == nil || job.Job.Req == nil || job.Job.Details == nil {
+		return nil, errors.New("invalid job")
 	}
 
-	requestID := string(core.RandomManifestID())
-	ctx = clog.AddVal(ctx, "request_id", requestID)
-
-	// Setup request body to be able to preserve for retries
-	// Read the entire body first with 10MB limit
-	bodyBytes, err := io.ReadAll(r.Body)
-	if err != nil {
-		if maxErr, ok := err.(*http.MaxBytesError); ok {
-			clog.Warningf(ctx, "Request body too large (over 10MB)")
-			return nil, http.StatusRequestEntityTooLarge, fmt.Errorf("request body too large (max %d bytes)", maxErr.Limit)
-		} else {
-			clog.Errorf(ctx, "Error reading request body: %v", err)
-			return nil, http.StatusBadRequest, fmt.Errorf("error reading request body: %w", err)
-		}
-	}
-	r.Body.Close()
-
-	// Decode the StartRequest from JSON body
-	var startReq StartRequest
-	if err := json.NewDecoder(bytes.NewBuffer(bodyBytes)).Decode(&startReq); err != nil {
-		return nil, http.StatusBadRequest, fmt.Errorf("invalid JSON request body: %w", err)
-	}
-
-	//live-video-to-video uses path value for this
-	streamName := startReq.Stream
-
-	streamRequestTime := time.Now().UnixMilli()
-
-	ctx = clog.AddVal(ctx, "stream", streamName)
-
-	// If auth webhook is set and returns an output URL, this will be replaced
-	outputURL := startReq.RtmpOutput
-
-	// convention to avoid re-subscribing to our own streams
-	// in case we want to push outputs back into mediamtx -
-	// use an `-out` suffix for the stream name.
-	if strings.HasSuffix(streamName, "-out") {
-		// skip for now; we don't want to re-publish our own outputs
-		return nil, 0, nil
-	}
-
-	// if auth webhook returns pipeline config these will be replaced
+	requestID := job.Job.Req.ID
 	pipeline := job.Job.Req.Capability
-	rawParams := startReq.Params
-	streamID := startReq.StreamId
-
-	var pipelineID string
-	var pipelineParams map[string]interface{}
-	if rawParams != "" {
-		if err := json.Unmarshal([]byte(rawParams), &pipelineParams); err != nil {
-			return nil, http.StatusBadRequest, errors.New("invalid model params")
-		}
+	pipelineID := pipeline // Can be overridden if needed
+	if useVideoSegmentWriter {
+		pipelineID = "transcoding"
+	}
+	// Ensure required fields are set
+	if requestID == "" {
+		requestID = string(core.RandomManifestID())
+		job.Job.Req.ID = requestID
 	}
 
-	//ensure a streamid exists and includes the streamName if provided
-	if streamID == "" {
-		streamID = string(core.RandomManifestID())
+	// Ensure pipelineParams is not nil and formatted correctly
+	if pipelineParams == nil {
+		pipelineParams = []byte("{\"params\":{}}")
 	}
-	if streamName != "" {
-		streamID = fmt.Sprintf("%s-%s", streamName, streamID)
-	}
-	// BYOC uses Livepeer native WHIP
-	// Currently for webrtc we need to add a path prefix due to the ingress setup
-	//mediaMTXStreamPrefix := r.PathValue("prefix")
-	//if mediaMTXStreamPrefix != "" {
-	//	mediaMTXStreamPrefix = mediaMTXStreamPrefix + "/"
-	//}
-	mediaMtxHost := os.Getenv("LIVE_AI_PLAYBACK_HOST")
-	if mediaMtxHost == "" {
-		mediaMtxHost = "rtmp://localhost:1935"
-	}
-	mediaMTXInputURL := fmt.Sprintf("%s/%s%s", mediaMtxHost, "", streamID)
-	mediaMTXOutputURL := mediaMTXInputURL + "-out"
-	mediaMTXOutputAlias := fmt.Sprintf("%s-%s-out", mediaMTXInputURL, requestID)
-
-	var (
-		whipURL string
-		rtmpURL string
-		whepURL string
-		dataURL string
-	)
-
-	updateURL := fmt.Sprintf("https://%s/ai/stream/%s/%s", ls.LivepeerNode.GatewayHost, streamID, "update")
-	statusURL := fmt.Sprintf("https://%s/ai/stream/%s/%s", ls.LivepeerNode.GatewayHost, streamID, "status")
-
-	if job.Job.Params.EnableVideoIngress {
-		whipURL = fmt.Sprintf("https://%s/ai/stream/%s/%s", ls.LivepeerNode.GatewayHost, streamID, "whip")
-		rtmpURL = mediaMTXInputURL
-	}
-	if job.Job.Params.EnableVideoEgress {
-		whepURL = generateWhepUrl(streamID, requestID)
-	}
-	if job.Job.Params.EnableDataOutput {
-		dataURL = fmt.Sprintf("https://%s/ai/stream/%s/%s", ls.LivepeerNode.GatewayHost, streamID, "data")
-	}
-
-	//if set this will overwrite settings above
-	if LiveAIAuthWebhookURL != nil {
-		authResp, err := authenticateAIStream(LiveAIAuthWebhookURL, ls.liveAIAuthApiKey, AIAuthRequest{
-			Stream:      streamName,
-			Type:        "", //sourceTypeStr
-			QueryParams: rawParams,
-			GatewayHost: ls.LivepeerNode.GatewayHost,
-			WhepURL:     whepURL,
-			UpdateURL:   updateURL,
-			StatusURL:   statusURL,
-		})
-		if err != nil {
-			return nil, http.StatusForbidden, fmt.Errorf("live ai auth failed: %w", err)
-		}
-
-		if authResp.RTMPOutputURL != "" {
-			outputURL = authResp.RTMPOutputURL
-		}
-
-		if authResp.Pipeline != "" {
-			pipeline = authResp.Pipeline
-		}
-
-		if len(authResp.paramsMap) > 0 {
-			if _, ok := authResp.paramsMap["prompt"]; !ok && pipeline == "comfyui" {
-				pipelineParams = map[string]interface{}{"prompt": authResp.paramsMap}
-			} else {
-				pipelineParams = authResp.paramsMap
-			}
-		}
-
-		if authResp.StreamID != "" {
-			streamID = authResp.StreamID
-		}
-
-		if authResp.PipelineID != "" {
-			pipelineID = authResp.PipelineID
-		}
-	}
+	// Use requestID as streamID
+	streamID := requestID
 
 	ctx = clog.AddVal(ctx, "stream_id", streamID)
-	clog.Infof(ctx, "Received live video AI request")
+	ctx = clog.AddVal(ctx, "request_id", requestID)
 
-	// collect all RTMP outputs
-	var rtmpOutputs []string
-	if job.Job.Params.EnableVideoEgress {
-		if outputURL != "" {
-			rtmpOutputs = append(rtmpOutputs, outputURL)
-		}
-		if mediaMTXOutputURL != "" {
-			rtmpOutputs = append(rtmpOutputs, mediaMTXOutputURL, mediaMTXOutputAlias)
-		}
+	// Check if stream already exists
+	if _, exists := ls.LivepeerNode.LivePipelines[streamID]; exists {
+		return nil, fmt.Errorf("stream already exists: %s", streamID)
 	}
-
-	clog.Info(ctx, "RTMP outputs", "destinations", rtmpOutputs)
-
-	// Clear any previous gateway status
-	GatewayStatus.Clear(streamID)
-	GatewayStatus.StoreKey(streamID, "whep_url", whepURL)
-
-	monitor.SendQueueEventAsync("stream_trace", map[string]interface{}{
-		"type":        "gateway_receive_stream_request",
-		"timestamp":   streamRequestTime,
-		"stream_id":   streamID,
-		"pipeline_id": pipelineID,
-		"request_id":  requestID,
-		"orchestrator_info": map[string]interface{}{
-			"address": "",
-			"url":     "",
-		},
-	})
 
 	// Count `ai_live_attempts` after successful parameters validation
 	clog.V(common.VERBOSE).Infof(ctx, "AI Live video attempt")
 	if monitor.Enabled {
-		monitor.AILiveVideoAttempt(job.Job.Req.Capability)
+		monitor.AILiveVideoAttempt(pipeline)
 	}
 
 	sendErrorEvent := LiveErrorEventSender(ctx, streamID, map[string]string{
@@ -587,24 +655,19 @@ func (ls *LivepeerServer) setupStream(ctx context.Context, r *http.Request, job 
 		"pipeline":    pipeline,
 	})
 
-	//params set with ingest types:
-	// RTMP
-	//   kickInput will kick the input from MediaMTX to force a reconnect
-	//   localRTMPPrefix mediaMTXInputURL matches to get the ingest from MediaMTX
-	// WHIP
-	//   kickInput will close the whip connection
-	//   localRTMPPrefix set by ENV variable LIVE_AI_PLAYBACK_HOST
-	ssr := media.NewSwitchableSegmentReader() //this converts ingest to segments to send to Orchestrator
+	// Create segment reader for input
+	ssr := media.NewSwitchableSegmentReader()
+
 	params := aiRequestParams{
 		node:        ls.LivepeerNode,
 		os:          drivers.NodeStorage.NewSession(requestID),
-		sessManager: nil,
+		sessManager: ls.AISessionManager,
 
 		liveParams: &liveRequestParams{
 			segmentReader:          ssr,
 			startTime:              time.Now(),
 			rtmpOutputs:            rtmpOutputs,
-			stream:                 streamID, //live video to video uses stream name, byoc combines to one id
+			stream:                 streamID,
 			paymentProcessInterval: ls.livePaymentInterval,
 			outSegmentTimeout:      ls.outSegmentTimeout,
 			requestID:              requestID,
@@ -612,42 +675,27 @@ func (ls *LivepeerServer) setupStream(ctx context.Context, r *http.Request, job 
 			pipelineID:             pipelineID,
 			pipeline:               pipeline,
 			sendErrorEvent:         sendErrorEvent,
-			manifestID:             pipeline, //byoc uses one balance per capability name
+			manifestID:             pipeline, // BYOC uses one balance per capability name
 		},
 	}
 
-	//create a dataWriter for data channel if enabled
+	// Create videoSegmentWriter for synchronous segment retrieval (e.g., HTTP push)
+	if useVideoSegmentWriter {
+		params.liveParams.videoSegmentWriter = media.NewSegmentWriter(5)
+	}
+
+	// Create dataWriter for data channel if enabled
 	if job.Job.Params.EnableDataOutput {
 		params.liveParams.dataWriter = media.NewSegmentWriter(5)
 	}
 
-	//check if stream exists
-	if params.inputStreamExists() {
-		return nil, http.StatusBadRequest, fmt.Errorf("stream already exists: %s", streamID)
-	}
+	// Register the pipeline
+	ls.LivepeerNode.NewLivePipeline(requestID, streamID, pipeline, params, pipelineParams)
 
-	clog.Infof(ctx, "stream setup videoIngress=%v videoEgress=%v dataOutput=%v", job.Job.Params.EnableVideoIngress, job.Job.Params.EnableVideoEgress, job.Job.Params.EnableDataOutput)
+	clog.Infof(ctx, "Created live pipeline streamID=%s pipeline=%s videoSegWriter=%v dataOutput=%v",
+		streamID, pipeline, useVideoSegmentWriter, job.Job.Params.EnableDataOutput)
 
-	//save the stream setup
-	paramsReq := map[string]interface{}{
-		"params": pipelineParams,
-	}
-	paramsReqBytes, _ := json.Marshal(paramsReq)
-	ls.LivepeerNode.NewLivePipeline(requestID, streamID, pipeline, params, paramsReqBytes) //track the pipeline for cancellation
-
-	job.Job.Req.ID = streamID
-	streamUrls := StreamUrls{
-		StreamId:      streamID,
-		WhipUrl:       whipURL,
-		WhepUrl:       whepURL,
-		RtmpUrl:       rtmpURL,
-		RtmpOutputUrl: strings.Join(rtmpOutputs, ","),
-		UpdateUrl:     updateURL,
-		StatusUrl:     statusURL,
-		DataUrl:       dataURL,
-	}
-
-	return &streamUrls, http.StatusOK, nil
+	return &params, nil
 }
 
 // mediamtx sends this request to go-livepeer when rtmp stream received
