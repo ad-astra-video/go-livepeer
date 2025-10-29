@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/livepeer/go-livepeer/clog"
+	"github.com/livepeer/go-livepeer/media"
 	"github.com/livepeer/go-livepeer/monitor"
 	"github.com/livepeer/go-livepeer/pm"
 	"github.com/livepeer/go-tools/drivers"
@@ -151,6 +152,11 @@ type authWebhookResponse struct {
 	VerificationFreq   uint                 `json:"verificationFreq"`
 	TimeoutMultiplier  int                  `json:"timeoutMultiplier"`
 	ForceSessionReinit bool                 `json:"forceSessionReinit"`
+
+	//AI processing on stream
+	UseAIProcessing      bool            `json:"useAIProcessing"`
+	AICapability         string          `json:"aiCapability"`
+	AIProcessingSettings json.RawMessage `json:"aiProcessingSettings"`
 }
 
 func NewLivepeerServer(ctx context.Context, rtmpAddr string, lpNode *core.LivepeerNode, httpIngest bool, transcodingOptions string) (*LivepeerServer, error) {
@@ -950,11 +956,60 @@ func (s *LivepeerServer) HandlePush(w http.ResponseWriter, r *http.Request) {
 			mid = cxn.mid
 		}
 	}
+
 	ctx = clog.AddManifestID(ctx, string(mid))
 	defer func(now time.Time) {
 		clog.Infof(ctx, "Finished push request at url=%s ua=%s addr=%s bytes=%d dur=%s resolution=%s took=%s", r.URL.String(), r.UserAgent(), r.RemoteAddr, len(body),
 			r.Header.Get("Content-Duration"), r.Header.Get("Content-Resolution"), time.Since(now))
 	}(now)
+
+	if authHeaderConfig.UseAIProcessing && authHeaderConfig.AICapability != "" {
+		_, exists := s.LivepeerNode.LivePipelines[string(mid)]
+		if !exists {
+			//params set with ingest types:
+			// RTMP
+			//   kickInput will kick the input from MediaMTX to force a reconnect
+			//   localRTMPPrefix mediaMTXInputURL matches to get the ingest from MediaMTX
+			// WHIP
+			//   kickInput will close the whip connection
+			//   localRTMPPrefix set by ENV variable LIVE_AI_PLAYBACK_HOST
+			midStr := string(mid)
+			sendErrorEvent := LiveErrorEventSender(ctx, midStr, map[string]string{
+				"type":        "error",
+				"request_id":  midStr,
+				"stream_id":   midStr,
+				"pipeline_id": "transcoding",
+				"pipeline":    authHeaderConfig.AICapability,
+			})
+			ssr := media.NewSwitchableSegmentReader() //this converts ingest to segments to send to Orchestrator
+			params := aiRequestParams{
+				node:        s.LivepeerNode,
+				os:          drivers.NodeStorage.NewSession(midStr),
+				sessManager: nil,
+
+				//rtmpOutputs:            rtmpOutputs,
+				liveParams: &liveRequestParams{
+					segmentReader:          ssr,
+					startTime:              time.Now(),
+					stream:                 midStr, //live video to video uses stream name, byoc combines to one id
+					paymentProcessInterval: s.livePaymentInterval,
+					outSegmentTimeout:      s.outSegmentTimeout,
+					requestID:              midStr,
+					streamID:               midStr,
+					pipelineID:             "transcoding",
+					pipeline:               authHeaderConfig.AICapability,
+					sendErrorEvent:         sendErrorEvent,
+					manifestID:             authHeaderConfig.AICapability, //byoc uses one balance per capability name
+				},
+			}
+
+			s.LivepeerNode.NewLivePipeline(midStr, midStr, authHeaderConfig.AICapability, params, authHeaderConfig.AIProcessingSettings)
+
+			clog.Infof(ctx, "Created AI pipeline to process segments")
+			errorOut(http.StatusBadRequest, "No AI processing pipeline found for manifestID=%s", mid)
+			return
+		}
+	}
 
 	fname := path.Base(r.URL.Path)
 	seq, err := strconv.ParseUint(strings.TrimSuffix(fname, ext), 10, 64)

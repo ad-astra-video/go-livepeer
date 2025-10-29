@@ -95,15 +95,16 @@ type aiRequestParams struct {
 
 // For live video pipelines
 type liveRequestParams struct {
-	segmentReader *media.SwitchableSegmentReader
-	dataWriter    *media.SegmentWriter
-	stream        string
-	requestID     string
-	streamID      string
-	manifestID    string
-	pipelineID    string
-	pipeline      string
-	orchestrator  string
+	segmentReader      *media.SwitchableSegmentReader
+	dataWriter         *media.SegmentWriter
+	videoSegmentWriter *media.SegmentWriter
+	stream             string
+	requestID          string
+	streamID           string
+	manifestID         string
+	pipelineID         string
+	pipeline           string
+	orchestrator       string
 
 	paymentProcessInterval time.Duration
 	outSegmentTimeout      time.Duration

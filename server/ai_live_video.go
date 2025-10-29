@@ -236,17 +236,25 @@ func startTrickleSubscribe(ctx context.Context, url *url.URL, params aiRequestPa
 
 	ctx = clog.AddVal(ctx, "url", url.Redacted())
 
-	// Set up output buffers and ffmpeg processes
-	rbc := media.RingBufferConfig{BufferLen: 5_000_000} // 5 MB, 20-30 seconds at current rates
-	outWriter, err := media.NewRingBuffer(&rbc)
-	if err != nil {
-		stopProcessing(ctx, params, fmt.Errorf("ringbuffer init failed: %w", err))
-		return
-	}
-	setOutWriter(ctx, outWriter, params) // for WHEP
-	// Launch ffmpeg for each configured RTMP output
-	for _, outURL := range params.liveParams.rtmpOutputs {
-		go ffmpegOutput(ctx, outURL, outWriter, params)
+	// Determine if we're using segment-based output or streaming output
+	useSegmentWriter := params.liveParams.videoSegmentWriter != nil
+	videoSegmentWriter := params.liveParams.videoSegmentWriter
+
+	var outWriter *media.RingBuffer
+	if !useSegmentWriter {
+		// Set up output buffers and ffmpeg processes for streaming (WHEP/RTMP)
+		rbc := media.RingBufferConfig{BufferLen: 5_000_000} // 5 MB, 20-30 seconds at current rates
+		var err error
+		outWriter, err = media.NewRingBuffer(&rbc)
+		if err != nil {
+			stopProcessing(ctx, params, fmt.Errorf("ringbuffer init failed: %w", err))
+			return
+		}
+		setOutWriter(ctx, outWriter, params) // for WHEP
+		// Launch ffmpeg for each configured RTMP output
+		for _, outURL := range params.liveParams.rtmpOutputs {
+			go ffmpegOutput(ctx, outURL, outWriter, params)
+		}
 	}
 
 	// watchdog that gets reset on every segment to catch output stalls
@@ -258,7 +266,12 @@ func startTrickleSubscribe(ctx context.Context, url *url.URL, params aiRequestPa
 
 	// read segments from trickle subscription
 	go func() {
-		defer outWriter.Close()
+		if outWriter != nil {
+			defer outWriter.Close()
+		}
+		if videoSegmentWriter != nil {
+			defer videoSegmentWriter.Close()
+		}
 		defer segmentTicker.Stop()
 
 		var err error
@@ -311,7 +324,24 @@ func startTrickleSubscribe(ctx context.Context, url *url.URL, params aiRequestPa
 			clog.V(8).Infof(ctx, "trickle subscribe read data received seq=%d", seq)
 			copyStartTime := time.Now()
 
-			n, err := copySegment(ctx, segment, outWriter, seq, params)
+			var n int64
+			var err error
+			if useSegmentWriter {
+				// Write complete segment to videoSegmentWriter
+				writer, werr := videoSegmentWriter.Next()
+				if werr != nil {
+					if werr != io.EOF {
+						stopProcessing(ctx, params, fmt.Errorf("trickle subscribe could not get next writer: %w", werr))
+					}
+					return
+				}
+				n, err = copySegment(ctx, segment, writer, seq, params)
+				writer.Close() // Mark segment as complete
+			} else {
+				// Write streaming data to outWriter
+				n, err = copySegment(ctx, segment, outWriter, seq, params)
+			}
+
 			if err != nil {
 				if errors.Is(err, context.Canceled) {
 					clog.Info(ctx, "trickle subscribe stopping - context canceled")
