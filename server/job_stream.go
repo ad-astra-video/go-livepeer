@@ -53,6 +53,10 @@ func (ls *LivepeerServer) startAIStreamForTranscoding(ctx context.Context, strea
 		return fmt.Errorf("failed to setup stream: %w", err)
 	}
 
+	go ls.runStream(gatewayJob)
+
+	go ls.monitorStream(streamID)
+
 	return nil
 }
 
@@ -680,13 +684,13 @@ func (ls *LivepeerServer) setupStream(ctx context.Context, job *gatewayJob, rtmp
 	}
 
 	// Create videoSegmentWriter for synchronous segment retrieval (e.g., HTTP push)
-	if useVideoSegmentWriter {
-		params.liveParams.videoSegmentWriter = media.NewSegmentWriter(5)
+	if useVideoSegmentWriter && job.Job.Params.EnableVideoEgress {
+		params.liveParams.videoSegmentWriter = media.NewSegmentWriter(1)
 	}
 
 	// Create dataWriter for data channel if enabled
 	if job.Job.Params.EnableDataOutput {
-		params.liveParams.dataWriter = media.NewSegmentWriter(5)
+		params.liveParams.dataWriter = media.NewSegmentWriter(1)
 	}
 
 	// Register the pipeline

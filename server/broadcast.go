@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"math/big"
 	"math/rand"
@@ -20,6 +21,7 @@ import (
 	"github.com/livepeer/go-livepeer/clog"
 	"github.com/livepeer/go-livepeer/common"
 	"github.com/livepeer/go-livepeer/core"
+	"github.com/livepeer/go-livepeer/media"
 	"github.com/livepeer/go-livepeer/monitor"
 	"github.com/livepeer/go-livepeer/net"
 	"github.com/livepeer/go-livepeer/pm"
@@ -1123,6 +1125,133 @@ func processSegment(ctx context.Context, cxn *rtmpConnection, seg *stream.HLSSeg
 		}
 	}
 	return urls, err
+}
+
+func processSegmentWithAI(ctx context.Context, cxn *rtmpConnection, seg *stream.HLSSegment, segPar *core.SegmentParameters, aiParams *aiRequestParams) ([]string, error) {
+	if aiParams.liveParams != nil && aiParams.liveParams.segmentReader != nil {
+		os := cxn.pl.GetOSSession()
+		// Wrap segment data as CloneableReader
+		mediaWriter := media.NewMediaWriter()
+		go func() {
+			defer mediaWriter.Close()
+			mediaWriter.Write(seg.Data)
+		}()
+
+		// Feed to segment reader which will trigger AI processing
+		aiParams.liveParams.segmentReader.Read(mediaWriter.MakeReader())
+
+		// Wait for AI-processed result - check both video and data outputs
+		type pollResult struct {
+			url string
+			err error
+		}
+
+		// Calculate timeout for polling (half of segment duration)
+		pollTimeout := time.Duration(seg.Duration/2) * time.Millisecond
+		if pollTimeout < 500*time.Millisecond {
+			pollTimeout = 500 * time.Millisecond // Minimum timeout
+		}
+		pollDeadline := time.Now().Add(pollTimeout)
+		pollInterval := 25 * time.Millisecond
+
+		// Use channels for thread-safe communication
+		videoChan := make(chan pollResult, 1)
+		dataChan := make(chan pollResult, 1)
+
+		// Poll for video output (MPEG-TS from subscriber)
+		if aiParams.liveParams.videoSegmentWriter != nil {
+			go func() {
+				clog.V(8).Infof(ctx, "Starting video output polling, deadline in %v", pollTimeout)
+				for time.Now().Before(pollDeadline) {
+					segmentReader := aiParams.liveParams.videoSegmentWriter.MakeReader(media.SegmentReaderConfig{})
+					reader, err := segmentReader.Next()
+					if err == nil {
+						videoData, err := io.ReadAll(reader)
+						if err == nil && len(videoData) > 0 {
+							clog.V(8).Infof(ctx, "Got AI video output: %d bytes", len(videoData))
+							url, err := os.SaveData(ctx, fmt.Sprintf("ai-video-result/%d.ts", seg.SeqNo), bytes.NewReader(videoData), nil, 0)
+							if err != nil {
+								clog.Errorf(ctx, "Error saving AI video segment err=%q", err)
+								videoChan <- pollResult{url: "", err: err}
+								return
+							}
+							videoChan <- pollResult{url: url, err: nil}
+							return
+						}
+					}
+					if time.Now().Before(pollDeadline) {
+						time.Sleep(pollInterval)
+					}
+				}
+				videoChan <- pollResult{url: "", err: fmt.Errorf("failed to get AI video segment within timeout")}
+			}()
+		} else {
+			// No video output expected, send empty result immediately
+			videoChan <- pollResult{url: "", err: nil}
+		}
+
+		// Poll for data output (JSON from data channel)
+		if aiParams.liveParams.dataWriter != nil {
+			go func() {
+				clog.V(8).Infof(ctx, "Starting data output polling, deadline in %v", pollTimeout)
+				for time.Now().Before(pollDeadline) {
+					dataReader := aiParams.liveParams.dataWriter.MakeReader(media.SegmentReaderConfig{})
+					reader, err := dataReader.Next()
+					if err == nil {
+						dataOutput, err := io.ReadAll(reader)
+						if err == nil && len(dataOutput) > 0 {
+							url, err := os.SaveData(ctx, fmt.Sprintf("ai-data-result/%d.ts", seg.SeqNo), bytes.NewReader(dataOutput), nil, 0)
+							if err != nil {
+								clog.Errorf(ctx, "Error saving AI data segment err=%q", err)
+								dataChan <- pollResult{url: "", err: err}
+								return
+							}
+							dataChan <- pollResult{url: url, err: nil}
+							return
+						}
+					}
+					if time.Now().Before(pollDeadline) {
+						time.Sleep(pollInterval)
+					}
+				}
+				dataChan <- pollResult{url: "", err: fmt.Errorf("failed to get AI data output within timeout")}
+			}()
+		} else {
+			// No data output expected, send empty result immediately
+			dataChan <- pollResult{url: "", err: nil}
+		}
+
+		// Wait for both polling goroutines to complete
+		// Read from both channels concurrently to avoid deadlock
+		clog.Infof(ctx, "Waiting for AI polling goroutines to complete...")
+
+		var videoResult, dataResult pollResult
+		var videoReceived, dataReceived bool
+		var urls []string
+		for !videoReceived || !dataReceived {
+			select {
+			case videoResult = <-videoChan:
+				clog.V(common.VERBOSE).Infof(ctx, "Video result received, err: %v", videoResult.err)
+				if videoResult.url != "" {
+					urls = append(urls, videoResult.url)
+				}
+				videoReceived = true
+			case dataResult = <-dataChan:
+				clog.V(common.VERBOSE).Infof(ctx, "Data result received, err: %v", dataResult.err)
+				if dataResult.url != "" {
+					urls = append(urls, dataResult.url)
+				}
+				dataReceived = true
+			}
+		}
+
+		clog.V(common.DEBUG).Infof(ctx, "Received AI results - video: %v (err: %v), data: %v (err: %v)",
+			videoResult.url != "", videoResult.err, dataResult.url != "", dataResult.err)
+
+		return urls, nil
+	} else {
+		return nil, fmt.Errorf("AI params not properly initialized")
+	}
 }
 
 func transcodeSegment(ctx context.Context, cxn *rtmpConnection, seg *stream.HLSSegment, name string,

@@ -947,8 +947,8 @@ func createPayment(ctx context.Context, jobReq *JobRequest, orchToken *core.JobT
 		clog.V(common.DEBUG).Infof(ctx, "No payment required, using balance=%v", balance.FloatString(3))
 		return "", nil
 	} else {
-		//calc ticket count
-		ticketCnt := math.Ceil(float64(jobReq.Timeout))
+		//calc ticket count, minimum of 1 ticket if need a payment
+		ticketCnt := math.Max(math.Ceil(float64(jobReq.Timeout)), 1)
 		tickets, err := node.Sender.CreateTicketBatch(sessionID, int(ticketCnt))
 		if err != nil {
 			clog.Errorf(ctx, "Unable to create ticket batch err=%v", err)
