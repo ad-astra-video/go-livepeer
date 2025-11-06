@@ -77,6 +77,11 @@ type JobParameters struct {
 	Orchestrators JobOrchestratorsFilter `json:"orchestrators,omitempty"` //list of orchestrators to use for the job
 }
 
+type JobDetails struct {
+	ReserveCapacity     bool `json:"reserve_capacity,omitempty"`
+	EndReservedCapacity bool `json:"end_reserved_capacity,omitempty"`
+}
+
 type JobOrchestratorsFilter struct {
 	Exclude []string `json:"exclude,omitempty"`
 	Include []string `json:"include,omitempty"`
@@ -195,7 +200,7 @@ func (h *lphttp) GetJobToken(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	jobToken := JobToken{SenderAddress: nil, TicketParams: nil, Balance: 0, Price: nil}
 
-	if !orch.CheckExternalCapabilityCapacity(jobCapsHdr) {
+	if !orch.CheckExternalCapabilityCapacity(jobCapsHdr, jobSenderAddr.Addr, "") {
 		//send response indicating no capacity available
 		w.WriteHeader(http.StatusServiceUnavailable)
 	} else {
@@ -294,6 +299,13 @@ func (ls *LivepeerServer) submitJob(ctx context.Context, w http.ResponseWriter, 
 	searchTimeout, respTimeout := getOrchSearchTimeouts(ctx, r.Header.Get(jobOrchSearchTimeoutHdr), r.Header.Get(jobOrchSearchRespTimeoutHdr))
 	jobReq.orchSearchTimeout = searchTimeout
 	jobReq.orchSearchRespTimeout = respTimeout
+
+	var jobDetails JobDetails
+	if err := json.Unmarshal([]byte(jobReq.Request), &jobDetails); err != nil {
+		clog.Errorf(ctx, "Unable to unmarshal job request err=%v", err)
+		http.Error(w, fmt.Sprintf("Unable to unmarshal job request err=%v", err), http.StatusBadRequest)
+		return
+	}
 
 	var params JobParameters
 	if err := json.Unmarshal([]byte(jobReq.Parameters), &params); err != nil {
@@ -578,6 +590,8 @@ func processJob(ctx context.Context, h *lphttp, w http.ResponseWriter, r *http.R
 
 	clog.V(common.SHORT).Infof(ctx, "Received job, sending for processing")
 
+	clog.V(common.SHORT).Infof(ctx, "Received job, sending for processing")
+
 	// Read the original body
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -629,9 +643,11 @@ func processJob(ctx context.Context, h *lphttp, w http.ResponseWriter, r *http.R
 	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
 	w.Header().Set("X-Metadata", resp.Header.Get("X-Metadata"))
 
-	//release capacity for another request
-	// if requester closes the connection need to release capacity
-	defer orch.FreeExternalCapabilityCapacity(jobReq.Capability)
+	//release capacity for another request (only if not using a reservation)
+	hasReservation := orch.CheckExternalCapabilityCapacity(jobReq.Capability, jobReq.Sender, jobReq.ID)
+	if !hasReservation {
+		defer orch.FreeExternalCapabilityCapacity(jobReq.Capability)
+	}
 
 	if !strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
 		//non streaming response
@@ -985,7 +1001,34 @@ func verifyJobCreds(ctx context.Context, orch Orchestrator, jobCreds string) (*J
 			return nil, errSegSig
 		}
 
-		if orch.ReserveExternalCapabilityCapacity(jobData.Capability) != nil {
+		// Parse job details to check if reservation is requested
+		var jobDetails JobDetails
+		if err := json.Unmarshal([]byte(jobData.Request), &jobDetails); err == nil {
+			if jobDetails.ReserveCapacity {
+				// Create a reservation for the timeout duration
+				reservationID, err := orch.ReserveExternalCapabilityCapacity(
+					jobData.Capability,
+					jobData.Sender,
+					jobData.ID,
+					time.Duration(jobData.Timeout)*time.Second,
+				)
+				if err != nil {
+					clog.Errorf(ctx, "Failed to reserve capacity: %v", err)
+					return nil, errZeroCapacity
+				}
+				// Update the job ID to be the reservation ID for tracking
+				jobData.ID = reservationID
+				clog.V(common.DEBUG).Infof(ctx, "Created reservation: %s for timeout: %d seconds", reservationID, jobData.Timeout)
+			} else if orch.CheckExternalCapabilityCapacity(jobData.Capability, jobData.Sender, jobData.ID) {
+				// The ID matches an existing reservation - just log it
+				clog.V(common.DEBUG).Infof(ctx, "Using existing reservation: %s", jobData.ID)
+			} else {
+				// No reservation, reserve capacity for request only (timeout = 0 for legacy behavior)
+				if _, err := orch.ReserveExternalCapabilityCapacity(jobData.Capability, "", "", 0); err != nil {
+					return nil, errZeroCapacity
+				}
+			}
+		} else {
 			return nil, errZeroCapacity
 		}
 

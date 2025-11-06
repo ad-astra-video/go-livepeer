@@ -238,19 +238,21 @@ func (r *mockJobOrchestrator) RemoveExternalCapability(extCapability string) err
 
 	return nil
 }
-func (r *mockJobOrchestrator) CheckExternalCapabilityCapacity(extCap string) bool {
+func (r *mockJobOrchestrator) CheckExternalCapabilityCapacity(extCap, sender, reservationID string) bool {
 	if r.checkExternalCapabilityCapacity == nil {
 		return true
 	} else {
 		return r.checkExternalCapabilityCapacity(extCap)
 	}
 }
-func (r *mockJobOrchestrator) ReserveExternalCapabilityCapacity(extCap string) error {
-	if r.reserveCapacity == nil {
-		return nil
-	} else {
-		return r.reserveCapacity(extCap)
+func (r *mockJobOrchestrator) ReserveExternalCapabilityCapacity(extCapability, sender, requestID string, timeout time.Duration) (string, error) {
+	if timeout > 0 {
+		return "test-reservation-id", nil
 	}
+	if r.reserveCapacity == nil {
+		return "", nil
+	}
+	return "", r.reserveCapacity(extCapability)
 }
 func (r *mockJobOrchestrator) FreeExternalCapabilityCapacity(extCap string) error {
 	return r.freeCapacity(extCap)

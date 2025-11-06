@@ -266,11 +266,14 @@ func (r *stubOrchestrator) RegisterExternalCapability(extCapabilitySettings stri
 func (r *stubOrchestrator) RemoveExternalCapability(extCapability string) error {
 	return nil
 }
-func (r *stubOrchestrator) CheckExternalCapabilityCapacity(extCap string) bool {
+func (r *stubOrchestrator) CheckExternalCapabilityCapacity(extCap, sender, reservationID string) bool {
 	return true
 }
-func (r *stubOrchestrator) ReserveExternalCapabilityCapacity(extCap string) error {
-	return nil
+func (r *stubOrchestrator) ReserveExternalCapabilityCapacity(extCapability, sender, requestID string, timeout time.Duration) (string, error) {
+	if timeout > 0 {
+		return "test-reservation-id", nil
+	}
+	return "", nil
 }
 func (r *stubOrchestrator) FreeExternalCapabilityCapacity(extCap string) error {
 	return nil
@@ -1623,11 +1626,14 @@ func (o *mockOrchestrator) RegisterExternalCapability(extCapabilitySettings stri
 func (o *mockOrchestrator) RemoveExternalCapability(extCapability string) error {
 	return nil
 }
-func (o *mockOrchestrator) CheckExternalCapabilityCapacity(extCap string) bool {
+func (o *mockOrchestrator) CheckExternalCapabilityCapacity(extCap, sender, reservationID string) bool {
 	return true
 }
-func (o *mockOrchestrator) ReserveExternalCapabilityCapacity(extCap string) error {
-	return nil
+func (o *mockOrchestrator) ReserveExternalCapabilityCapacity(extCapability, sender, requestID string, timeout time.Duration) (string, error) {
+	if timeout > 0 {
+		return "test-reservation-id", nil
+	}
+	return "", nil
 }
 func (o *mockOrchestrator) FreeExternalCapabilityCapacity(extCap string) error {
 	return nil

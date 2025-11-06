@@ -939,6 +939,7 @@ func StartLivepeer(ctx context.Context, cfg LivepeerConfig) {
 		}
 
 		n.Balances = core.NewAddressBalances(cleanupInterval)
+		n.ExternalCapabilities.SetBalances(n.Balances)
 		defer n.Balances.StopCleanup()
 
 		// By default the ticket recipient is the node's address

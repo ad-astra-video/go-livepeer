@@ -1148,29 +1148,41 @@ func (orch *orchestrator) GetUrlForCapability(extCapability string) string {
 	return ""
 }
 
-func (orch *orchestrator) CheckExternalCapabilityCapacity(extCapability string) bool {
-	if cap, ok := orch.node.ExternalCapabilities.Capabilities[extCapability]; !ok {
+func (orch *orchestrator) CheckExternalCapabilityCapacity(extCapability, sender, reservationID string) bool {
+	cap, ok := orch.node.ExternalCapabilities.Capabilities[extCapability]
+	if !ok {
 		return false
-	} else {
-		if cap.Load < cap.Capacity {
-			return true
-		} else {
-			return false
-		}
 	}
+
+	// If a reservation ID is provided, check if it exists
+	if reservationID != "" {
+		return cap.HasReservation(reservationID)
+	}
+
+	// Otherwise, check if capacity is available considering both Load and reservations
+	return cap.GetAvailableCapacity(sender) > 0
 }
 
-func (orch *orchestrator) ReserveExternalCapabilityCapacity(extCapability string) error {
+// ReserveExternalCapabilityCapacity reserves capacity for an external capability
+// If timeout is 0, simply increments Load (legacy behavior)
+// If timeout > 0, creates a timed reservation with periodic charging
+// Returns reservation ID if timeout > 0, empty string otherwise
+func (orch *orchestrator) ReserveExternalCapabilityCapacity(extCapability, sender, requestID string, timeout time.Duration) (string, error) {
 	cap, ok := orch.node.ExternalCapabilities.Capabilities[extCapability]
-	if ok {
+	if !ok {
+		return "", errors.New("external capability not found")
+	}
+
+	// If timeout is 0, use legacy simple reservation (just increment load)
+	if timeout == 0 {
 		cap.mu.Lock()
 		defer cap.mu.Unlock()
-
 		cap.Load++
-		return nil
-	} else {
-		return errors.New("external capability not found")
+		return "", nil
 	}
+
+	// Otherwise, create a timed reservation with charging
+	return orch.node.ExternalCapabilities.ReserveCapacityWithTimeout(extCapability, timeout, sender, requestID)
 }
 
 func (orch *orchestrator) FreeExternalCapabilityCapacity(extCapability string) error {
