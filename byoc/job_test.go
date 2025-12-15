@@ -894,7 +894,7 @@ func TestGetJobToken_Success(t *testing.T) {
 	jsBytes, _ := json.Marshal(js)
 	jsBase64 := base64.StdEncoding.EncodeToString(jsBytes)
 
-	req := httptest.NewRequest("GET", "/proces/token", nil)
+	req := httptest.NewRequest("GET", "/process/token", nil)
 	req.Header.Set(jobEthAddressHdr, jsBase64)
 	req.Header.Set(jobCapabilityHdr, "test-cap")
 	w := httptest.NewRecorder()
