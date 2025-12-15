@@ -156,6 +156,7 @@ type StreamUrls struct {
 	UpdateUrl     string `json:"update_url"`
 	StatusUrl     string `json:"status_url"`
 	DataUrl       string `json:"data_url"`
+	StopUrl       string `json:"stop_url"`
 }
 
 type orchTrickleUrls struct {

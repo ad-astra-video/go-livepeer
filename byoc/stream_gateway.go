@@ -491,6 +491,7 @@ func (bsg *BYOCGatewayServer) setupStream(ctx context.Context, r *http.Request, 
 
 	updateURL := fmt.Sprintf("https://%s/ai/stream/%s/%s", bsg.node.GatewayHost, streamID, "update")
 	statusURL := fmt.Sprintf("https://%s/ai/stream/%s/%s", bsg.node.GatewayHost, streamID, "status")
+	stopURL := fmt.Sprintf("https://%s/ai/stream/%s/%s", bsg.node.GatewayHost, streamID, "stop")
 
 	if job.Job.Params.EnableVideoIngress {
 		whipURL = fmt.Sprintf("https://%s/ai/stream/%s/%s", bsg.node.GatewayHost, streamID, "whip")
@@ -651,6 +652,7 @@ func (bsg *BYOCGatewayServer) setupStream(ctx context.Context, r *http.Request, 
 		UpdateUrl:     updateURL,
 		StatusUrl:     statusURL,
 		DataUrl:       dataURL,
+		StopUrl:       stopURL,
 	}
 
 	return &streamUrls, http.StatusOK, nil
