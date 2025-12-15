@@ -69,8 +69,6 @@ type AddressBalances struct {
 	balances map[ethcommon.Address]*Balances
 	mtx      sync.Mutex
 	ttl      time.Duration
-
-	SharedBalMtx sync.Mutex
 }
 
 // NewAddressBalances creates a new AddressBalances instance
