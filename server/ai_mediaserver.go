@@ -518,8 +518,8 @@ func (ls *LivepeerServer) StartLiveVideo() http.Handler {
 		mediaMTXClient := media.NewMediaMTXClient(remoteHost, ls.mediaMTXApiPassword, sourceID, sourceType)
 
 		whepURL := generateWhepUrl(streamName, requestID)
-		if LiveAIAuthWebhookURL != nil {
-			authResp, err := authenticateAIStream(LiveAIAuthWebhookURL, ls.liveAIAuthApiKey, AIAuthRequest{
+		if ls.liveAIAuthWebhookURL != nil {
+			authResp, err := authenticateAIStream(ls.liveAIAuthWebhookURL, ls.liveAIAuthApiKey, AIAuthRequest{
 				Stream:      streamName,
 				Type:        sourceTypeStr,
 				QueryParams: queryParams,
@@ -670,9 +670,9 @@ func (ls *LivepeerServer) StartLiveVideo() http.Handler {
 					"url":     "",
 				},
 			})
-			ssr.Close()
 			<-orchSelection // wait for selection to complete
 			cleanupControl(ctx, params)
+			ssr.Close()
 			orchCancel()
 		}()
 
@@ -994,8 +994,8 @@ func (ls *LivepeerServer) CreateWhip(server *media.WHIPServer) http.Handler {
 
 			ctx = clog.AddVal(ctx, "source_type", sourceTypeStr)
 
-			if LiveAIAuthWebhookURL != nil {
-				authResp, err := authenticateAIStream(LiveAIAuthWebhookURL, ls.liveAIAuthApiKey, AIAuthRequest{
+			if ls.liveAIAuthWebhookURL != nil {
+				authResp, err := authenticateAIStream(ls.liveAIAuthWebhookURL, ls.liveAIAuthApiKey, AIAuthRequest{
 					Stream:      streamName,
 					Type:        sourceTypeStr,
 					QueryParams: queryParams,
@@ -1190,6 +1190,8 @@ func runStats(ctx context.Context, whipConn *media.WHIPConnection, streamID stri
 	for {
 		select {
 		case <-ctx.Done():
+			media.ClearOutputStats(requestID + "-video")
+			media.ClearOutputStats(requestID + "-audio")
 			return
 		case <-ticker.C:
 			stats, err := whipConn.Stats()
@@ -1203,7 +1205,19 @@ func runStats(ctx context.Context, whipConn *media.WHIPConnection, streamID stri
 			}
 			clog.Info(ctx, "whip TransportStats", "ID", stats.PeerConnStats.ID, "bytes_received", stats.PeerConnStats.BytesReceived, "bytes_sent", stats.PeerConnStats.BytesSent)
 			for _, s := range stats.TrackStats {
-				clog.Info(ctx, "whip InboundRTPStreamStats", "kind", s.Type, "jitter", fmt.Sprintf("%.3f", s.Jitter), "packets_lost", s.PacketsLost, "packets_received", s.PacketsReceived, "rtt", s.RTT)
+				outputStats := media.GetOutputStats(requestID + "-" + s.Type.String())
+				s.LastOutputTS = float64(outputStats.GetLastOutputTS()) / 90000.0
+				s.Latency = s.LastInputTS - s.LastOutputTS
+				clog.Info(ctx, "whip InboundRTPStreamStats",
+					"kind", s.Type,
+					"jitter", fmt.Sprintf("%.3f", s.Jitter),
+					"packets_lost", s.PacketsLost,
+					"packets_received", s.PacketsReceived,
+					"rtt", s.RTT,
+					"last_input_ts", fmt.Sprintf("%.3f", s.LastInputTS),
+					"last_output_ts", fmt.Sprintf("%.3f", s.LastOutputTS),
+					"latency", fmt.Sprintf("%0.3f", s.Latency),
+				)
 			}
 			GatewayStatus.StoreKey(streamID, "ingest_metrics", map[string]interface{}{
 				"stats": stats,

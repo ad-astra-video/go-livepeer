@@ -30,7 +30,6 @@ import (
 	"github.com/golang/glog"
 	"github.com/livepeer/go-livepeer/ai/worker"
 	"github.com/livepeer/go-livepeer/build"
-	"github.com/livepeer/go-livepeer/byoc"
 	"github.com/livepeer/go-livepeer/common"
 	"github.com/livepeer/go-livepeer/core"
 	"github.com/livepeer/go-livepeer/discovery"
@@ -185,7 +184,6 @@ type LivepeerConfig struct {
 	LiveAIHeartbeatInterval    *time.Duration
 	LivePaymentInterval        *time.Duration
 	LiveOutSegmentTimeout      *time.Duration
-	LiveAICapReportInterval    *time.Duration
 	LiveAICapRefreshModels     *string
 	LiveAISaveNSegments        *int
 }
@@ -243,7 +241,6 @@ func DefaultLivepeerConfig() LivepeerConfig {
 	defaultLiveOutSegmentTimeout := 0 * time.Second
 	defaultGatewayHost := ""
 	defaultLiveAIHeartbeatInterval := 5 * time.Second
-	defaultLiveAICapReportInterval := 25 * time.Minute
 
 	// Onchain:
 	defaultEthAcctAddr := ""
@@ -362,7 +359,6 @@ func DefaultLivepeerConfig() LivepeerConfig {
 		LiveOutSegmentTimeout:    &defaultLiveOutSegmentTimeout,
 		GatewayHost:              &defaultGatewayHost,
 		LiveAIHeartbeatInterval:  &defaultLiveAIHeartbeatInterval,
-		LiveAICapReportInterval:  &defaultLiveAICapReportInterval,
 
 		// Onchain:
 		EthAcctAddr:             &defaultEthAcctAddr,
@@ -1551,8 +1547,7 @@ func StartLivepeer(ctx context.Context, cfg LivepeerConfig) {
 			glog.Exit("Error setting live AI auth webhook URL ", err)
 		}
 		glog.Info("Using live AI auth webhook URL ", parsedUrl.Redacted())
-		server.LiveAIAuthWebhookURL = parsedUrl
-		byoc.LiveAIAuthWebhookURL = parsedUrl
+		n.LiveAIAuthWebhookURL = parsedUrl
 	}
 
 	httpIngest := true
@@ -1596,7 +1591,7 @@ func StartLivepeer(ctx context.Context, cfg LivepeerConfig) {
 		if *cfg.Network != "offchain" {
 			ctx, cancel := context.WithCancel(ctx)
 			defer cancel()
-			dbOrchPoolCache, err := discovery.NewDBOrchestratorPoolCache(ctx, n, timeWatcher, orchBlacklist, *cfg.DiscoveryTimeout, *cfg.LiveAICapReportInterval)
+			dbOrchPoolCache, err := discovery.NewDBOrchestratorPoolCache(ctx, n, timeWatcher, orchBlacklist, *cfg.DiscoveryTimeout)
 			if err != nil {
 				exit("Could not create orchestrator pool with DB cache: %v", err)
 			}
@@ -1762,7 +1757,7 @@ func StartLivepeer(ctx context.Context, cfg LivepeerConfig) {
 		n.LiveAITrickleHostForRunner = *cfg.LiveAITrickleHostForRunner
 	}
 	if cfg.LiveAICapRefreshModels != nil && *cfg.LiveAICapRefreshModels != "" {
-		glog.Warningf("The -liveAICapRefreshModels flag is deprecated, capacity is now available for all models, use -liveAICapReportInterval to set the interval for reporting capacity metrics")
+		n.LiveAICapRefreshModels = strings.Split(*cfg.LiveAICapRefreshModels, ",")
 	}
 	n.LiveAISaveNSegments = cfg.LiveAISaveNSegments
 

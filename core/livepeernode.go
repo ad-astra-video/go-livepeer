@@ -163,12 +163,14 @@ type LivepeerNode struct {
 
 	MediaMTXApiPassword        string
 	LiveAITrickleHostForRunner string
+	LiveAIAuthWebhookURL       *url.URL
 	LiveAIAuthApiKey           string
 	LiveAIHeartbeatURL         string
 	LiveAIHeartbeatHeaders     map[string]string
 	LiveAIHeartbeatInterval    time.Duration
 	LivePaymentInterval        time.Duration
 	LiveOutSegmentTimeout      time.Duration
+	LiveAICapRefreshModels     []string
 	LiveAISaveNSegments        *int
 
 	// Gateway
