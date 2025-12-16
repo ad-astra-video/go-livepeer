@@ -608,7 +608,7 @@ func TestGetJobToken_InvalidEthAddressHeader(t *testing.T) {
 	}
 
 	// Create a valid JobSender structure
-	js := &core.JobSender{
+	js := &JobSender{
 		Addr: "0x0000000000000000000000000000000000000000",
 		Sig:  "0x000000000000000000000000000000000000000000000000000000000000000000",
 	}
@@ -638,7 +638,7 @@ func TestGetJobToken_MissingCapabilityHeader(t *testing.T) {
 	}
 
 	// Create a valid JobSender structure
-	js := &core.JobSender{
+	js := &JobSender{
 		Addr: "0x0000000000000000000000000000000000000000",
 		Sig:  "0x000000000000000000000000000000000000000000000000000000000000000000",
 	}
@@ -681,7 +681,7 @@ func TestGetJobToken_NoCapacity(t *testing.T) {
 	// Create a valid JobSender structure
 	gateway := newMockJobOrchestrator()
 	sig, _ := gateway.Sign([]byte(hexutil.Encode(gateway.Address().Bytes())))
-	js := &core.JobSender{
+	js := &JobSender{
 		Addr: hexutil.Encode(gateway.Address().Bytes()),
 		Sig:  hexutil.Encode(sig),
 	}
@@ -725,7 +725,7 @@ func TestGetJobToken_JobPriceInfoError(t *testing.T) {
 	// Create a valid JobSender structure
 	gateway := newMockJobOrchestrator()
 	sig, _ := gateway.Sign([]byte(hexutil.Encode(gateway.Address().Bytes())))
-	js := &core.JobSender{
+	js := &JobSender{
 		Addr: hexutil.Encode(gateway.Address().Bytes()),
 		Sig:  hexutil.Encode(sig),
 	}
@@ -770,7 +770,7 @@ func TestGetJobToken_InsufficientReserve(t *testing.T) {
 	// Create a valid JobSender structure
 	gateway := newMockJobOrchestrator()
 	sig, _ := gateway.Sign([]byte(hexutil.Encode(gateway.Address().Bytes())))
-	js := &core.JobSender{
+	js := &JobSender{
 		Addr: hexutil.Encode(gateway.Address().Bytes()),
 		Sig:  hexutil.Encode(sig),
 	}
@@ -822,7 +822,7 @@ func TestGetJobToken_TicketParamsError(t *testing.T) {
 	// Create a valid JobSender structure
 	gateway := newMockJobOrchestrator()
 	sig, _ := gateway.Sign([]byte(hexutil.Encode(gateway.Address().Bytes())))
-	js := &core.JobSender{
+	js := &JobSender{
 		Addr: hexutil.Encode(gateway.Address().Bytes()),
 		Sig:  hexutil.Encode(sig),
 	}
@@ -887,7 +887,7 @@ func TestGetJobToken_Success(t *testing.T) {
 	// Create a valid JobSender structure
 	gateway := newMockJobOrchestrator()
 	sig, _ := gateway.Sign([]byte(hexutil.Encode(gateway.Address().Bytes())))
-	js := &core.JobSender{
+	js := &JobSender{
 		Addr: hexutil.Encode(gateway.Address().Bytes()),
 		Sig:  hexutil.Encode(sig),
 	}
@@ -905,7 +905,7 @@ func TestGetJobToken_Success(t *testing.T) {
 	resp := w.Result()
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	var token core.JobToken
+	var token JobToken
 	body, _ := io.ReadAll(resp.Body)
 	json.Unmarshal(body, &token)
 
@@ -963,7 +963,7 @@ func TestCreatePayment(t *testing.T) {
 		jobReq := JobRequest{
 			Capability: "test-payment-cap",
 		}
-		sender := core.JobSender{
+		sender := JobSender{
 			Addr: "0x1111111111111111111111111111111111111111",
 			Sig:  "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
 		}
@@ -971,7 +971,7 @@ func TestCreatePayment(t *testing.T) {
 		//match to pm maxWinProb
 		maxWinProb := new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 256), big.NewInt(1))
 		winProb10 := new(big.Int).Div(maxWinProb, big.NewInt(10))
-		orchTocken := core.JobToken{
+		orchTocken := JobToken{
 			TicketParams: &net.TicketParams{
 				Recipient:         ethcommon.HexToAddress("0x1111111111111111111111111111111111111111").Bytes(),
 				FaceValue:         big.NewInt(1000).Bytes(),
@@ -1043,12 +1043,12 @@ func createTestPayment(capability string) (string, error) {
 		Capability: capability,
 		Timeout:    1,
 	}
-	sender := core.JobSender{
+	sender := JobSender{
 		Addr: "0x1111111111111111111111111111111111111111",
 		Sig:  "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
 	}
 
-	orchTocken := core.JobToken{
+	orchTocken := JobToken{
 		TicketParams: &net.TicketParams{
 			Recipient:         ethcommon.HexToAddress("0x1111111111111111111111111111111111111111").Bytes(),
 			FaceValue:         big.NewInt(1000).Bytes(),
@@ -1349,10 +1349,10 @@ func orchTokenHandler(w http.ResponseWriter, r *http.Request) {
 
 }
 
-func createMockJobToken(hostUrl string) *core.JobToken {
-	return &core.JobToken{
+func createMockJobToken(hostUrl string) *JobToken {
+	return &JobToken{
 		ServiceAddr: hostUrl,
-		SenderAddress: &core.JobSender{
+		SenderAddress: &JobSender{
 			Addr: "0x1234567890abcdef1234567890abcdef123456",
 			Sig:  "0x456",
 		},

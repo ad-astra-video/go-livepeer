@@ -12,6 +12,7 @@ import (
 	"time"
 
 	ethcommon "github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/livepeer/go-livepeer/common"
 	"github.com/livepeer/go-livepeer/core"
 	"github.com/livepeer/go-livepeer/media"
@@ -129,6 +130,34 @@ type JobOrchestratorsFilter struct {
 	Include []string `json:"include,omitempty"`
 }
 
+type JobToken struct {
+	SenderAddress *JobSender        `json:"sender_address,omitempty"`
+	TicketParams  *net.TicketParams `json:"ticket_params,omitempty"`
+	Balance       int64             `json:"balance,omitempty"`
+	Price         *net.PriceInfo    `json:"price,omitempty"`
+	ServiceAddr   string            `json:"service_addr,omitempty"`
+
+	LastNonce uint32
+}
+
+func (jt JobToken) Address() string {
+	if jt.TicketParams != nil {
+		if jt.TicketParams.Recipient != nil {
+			return hexutil.Encode(jt.TicketParams.Recipient)
+		}
+	}
+	return ""
+}
+
+func (jt JobToken) URL() string {
+	return jt.ServiceAddr
+}
+
+type JobSender struct {
+	Addr string `json:"addr"`
+	Sig  string `json:"sig"`
+}
+
 // Internal structs used by the job processing pipeline
 type orchJob struct {
 	Req     *JobRequest
@@ -169,7 +198,7 @@ type orchTrickleUrls struct {
 
 type gatewayJob struct {
 	Job          *orchJob
-	Orchs        []core.JobToken
+	Orchs        []JobToken
 	SignedJobReq string
 
 	node *core.LivepeerNode
@@ -236,7 +265,7 @@ type byocLiveRequestParams struct {
 	sendErrorEvent func(error)
 
 	// Current orchestrator token (for reference to address, url, price, etc.)
-	orchToken core.JobToken
+	orchToken JobToken
 
 	// State for the stream processing
 	// startTime is the time when the first request is sent to the orchestrator

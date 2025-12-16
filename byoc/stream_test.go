@@ -464,7 +464,7 @@ func TestRunStream_RunAndCancelStream(t *testing.T) {
 
 		orchToken := createMockJobToken(server.URL)
 		orchJob := &orchJob{Req: jobReq, Params: &jobParams}
-		gatewayJob := &gatewayJob{Job: orchJob, Orchs: []core.JobToken{*orchToken}, node: node}
+		gatewayJob := &gatewayJob{Job: orchJob, Orchs: []JobToken{*orchToken}, node: node}
 
 		// Setup a LivepeerServer and a mock pipeline
 		bsg := newTestBYOCGatewayServer(node)
@@ -639,7 +639,7 @@ func TestRunStream_OrchestratorFailover(t *testing.T) {
 		orchToken2 := createMockJobToken(server2.URL)
 		orchToken2.TicketParams.Recipient = ethcommon.HexToAddress("0x1111111111111111111111111111111111111112").Bytes()
 		orchJob := &orchJob{Req: jobReq, Params: &jobParams}
-		gatewayJob := &gatewayJob{Job: orchJob, Orchs: []core.JobToken{*orchToken, *orchToken2}, node: node}
+		gatewayJob := &gatewayJob{Job: orchJob, Orchs: []JobToken{*orchToken, *orchToken2}, node: node}
 
 		// Setup a LivepeerServer and a mock pipeline
 		bsg := newTestBYOCGatewayServer(node)
@@ -1381,7 +1381,7 @@ func TestSendPaymentForStream(t *testing.T) {
 			_ = bsg.newStreamPipeline("req-1", streamID, "test-capability", params, nil)
 
 			// Create a job sender
-			jobSender := &core.JobSender{
+			jobSender := &JobSender{
 				Addr: "0x1111111111111111111111111111111111111111",
 				Sig:  "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
 			}
@@ -1431,7 +1431,7 @@ func TestSendPaymentForStream(t *testing.T) {
 			}
 			_ = bsg.newStreamPipeline("req-1", streamID, "test-capability", params, nil)
 
-			jobSender := &core.JobSender{
+			jobSender := &JobSender{
 				Addr: "0x1111111111111111111111111111111111111111",
 				Sig:  "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
 			}
@@ -1472,7 +1472,7 @@ func TestSendPaymentForStream(t *testing.T) {
 			}
 			_ = bsg.newStreamPipeline("req-1", streamID, "test-capability", params, nil)
 
-			jobSender := &core.JobSender{
+			jobSender := &JobSender{
 				Addr: "0x1111111111111111111111111111111111111111",
 				Sig:  "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
 			}
@@ -1529,7 +1529,7 @@ func TestSendPaymentForStream(t *testing.T) {
 			}
 			_ = bsg.newStreamPipeline("req-1", streamID, "test-capability", params, nil)
 
-			jobSender := &core.JobSender{
+			jobSender := &JobSender{
 				Addr: "0x1111111111111111111111111111111111111111",
 				Sig:  "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
 			}
@@ -1590,7 +1590,7 @@ func TestSendPaymentForStream(t *testing.T) {
 			}
 			_ = bsg.newStreamPipeline("req-1", streamID, "test-capability", params, nil)
 
-			jobSender := &core.JobSender{
+			jobSender := &JobSender{
 				Addr: "0x1111111111111111111111111111111111111111",
 				Sig:  "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
 			}
@@ -1651,7 +1651,7 @@ func TestSendPaymentForStream(t *testing.T) {
 			}
 			_ = bsg.newStreamPipeline("req-1", streamID, "test-capability", params, nil)
 
-			jobSender := &core.JobSender{
+			jobSender := &JobSender{
 				Addr: "0x1111111111111111111111111111111111111111",
 				Sig:  "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
 			}

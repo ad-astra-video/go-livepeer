@@ -104,7 +104,7 @@ func (bsg *BYOCGatewayServer) StopStream() http.Handler {
 	})
 }
 
-func (bsg *BYOCGatewayServer) sendStopStreamToOrch(ctx context.Context, streamID string, capability string, body []byte, orch core.JobToken) ([]byte, error) {
+func (bsg *BYOCGatewayServer) sendStopStreamToOrch(ctx context.Context, streamID string, capability string, body []byte, orch JobToken) ([]byte, error) {
 	glog.Infof("Sending stop request to Orchestrator %s", orch.ServiceAddr)
 	jobReqDet := JobRequestDetails{StreamId: streamID}
 	jobReqDetStr, err := json.Marshal(jobReqDet)
@@ -334,7 +334,7 @@ func (bsg *BYOCGatewayServer) monitorStream(streamId string) {
 	}
 }
 
-func (bsg *BYOCGatewayServer) sendPaymentForStream(ctx context.Context, streamID string, jobSender *core.JobSender) error {
+func (bsg *BYOCGatewayServer) sendPaymentForStream(ctx context.Context, streamID string, jobSender *JobSender) error {
 	stream, err := bsg.streamPipeline(streamID)
 	if err != nil {
 		clog.Errorf(ctx, "Error getting stream pipeline for stream %s: %v", streamID, err)

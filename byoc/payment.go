@@ -68,7 +68,7 @@ func compareAndUpdateBalance(node sharedBalanceNode, addr ethcommon.Address, id 
 	return current, diff, minimumBalCovered, resetToZero
 }
 
-func (bsg *BYOCGatewayServer) createPayment(ctx context.Context, jobReq *JobRequest, orchToken *core.JobToken) (string, error) {
+func (bsg *BYOCGatewayServer) createPayment(ctx context.Context, jobReq *JobRequest, orchToken *JobToken) (string, error) {
 	if orchToken == nil {
 		return "", errors.New("orchestrator token is nil, cannot create payment")
 	}
@@ -202,7 +202,7 @@ func ticketCountForCost(cost *big.Rat, ticketEv *big.Rat, timeoutSeconds int64) 
 	return int64(math.Max(0, math.Ceil(ticketCnt)))
 }
 
-func updateGatewayBalance(node *core.LivepeerNode, orchToken core.JobToken, capability string, took time.Duration) *big.Rat {
+func updateGatewayBalance(node *core.LivepeerNode, orchToken JobToken, capability string, took time.Duration) *big.Rat {
 	orchAddr := ethcommon.BytesToAddress(orchToken.TicketParams.Recipient)
 	// update for usage of compute
 	orchPrice := big.NewRat(orchToken.Price.PricePerUnit, orchToken.Price.PixelsPerUnit)

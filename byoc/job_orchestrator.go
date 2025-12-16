@@ -144,7 +144,7 @@ func (bso *BYOCOrchestratorServer) GetJobToken() http.Handler {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		jobToken := core.JobToken{SenderAddress: nil, TicketParams: nil, Balance: 0, Price: nil}
+		jobToken := JobToken{SenderAddress: nil, TicketParams: nil, Balance: 0, Price: nil}
 
 		if !orch.CheckExternalCapabilityCapacity(jobCapsHdr) {
 			//send response indicating no capacity available
@@ -189,7 +189,7 @@ func (bso *BYOCOrchestratorServer) GetJobToken() http.Handler {
 				capBalInt = capBalInt / 1000
 			}
 
-			jobToken = core.JobToken{
+			jobToken = JobToken{
 				SenderAddress: jobSenderAddr,
 				TicketParams:  ticketParams,
 				Balance:       capBalInt,
@@ -557,14 +557,14 @@ func (bso *BYOCOrchestratorServer) verifyJobCreds(ctx context.Context, jobCreds 
 	return jobData, nil
 }
 
-func (bso *BYOCOrchestratorServer) verifyTokenCreds(ctx context.Context, tokenCreds string) (*core.JobSender, error) {
+func (bso *BYOCOrchestratorServer) verifyTokenCreds(ctx context.Context, tokenCreds string) (*JobSender, error) {
 	buf, err := base64.StdEncoding.DecodeString(tokenCreds)
 	if err != nil {
 		glog.Error("Unable to base64-decode ", err)
 		return nil, errSegEncoding
 	}
 
-	var jobSender core.JobSender
+	var jobSender JobSender
 	err = json.Unmarshal(buf, &jobSender)
 	if err != nil {
 		clog.Errorf(ctx, "Unable to parse the header text: ", err)

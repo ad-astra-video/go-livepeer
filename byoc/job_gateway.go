@@ -207,7 +207,7 @@ func (bsg *BYOCGatewayServer) submitJob(ctx context.Context, w http.ResponseWrit
 	}
 }
 
-func (bsg *BYOCGatewayServer) sendJobToOrch(ctx context.Context, r *http.Request, jobReq *JobRequest, signedReqHdr string, orchToken core.JobToken, route string, body []byte) (*http.Response, int, error) {
+func (bsg *BYOCGatewayServer) sendJobToOrch(ctx context.Context, r *http.Request, jobReq *JobRequest, signedReqHdr string, orchToken JobToken, route string, body []byte) (*http.Response, int, error) {
 	orchUrl := orchToken.ServiceAddr + route
 	req, err := http.NewRequestWithContext(ctx, "POST", orchUrl, bytes.NewBuffer(body))
 	if err != nil {
@@ -270,7 +270,7 @@ func (bs *BYOCGatewayServer) sendPayment(ctx context.Context, orchPmtUrl, capabi
 
 func (bsg *BYOCGatewayServer) setupGatewayJob(ctx context.Context, jobReqHdr string, orchSearchTimeoutHdr string, orchSearchRespTimeoutHdr string, skipOrchSearch bool) (*gatewayJob, error) {
 
-	var orchs []core.JobToken
+	var orchs []JobToken
 
 	clog.Infof(ctx, "processing job request req=%v", jobReqHdr)
 	jobReq, err := bsg.verifyJobCreds(ctx, jobReqHdr, true)
@@ -349,7 +349,7 @@ func (bsg *BYOCGatewayServer) verifyJobCreds(ctx context.Context, jobCreds strin
 	return jobData, nil
 }
 
-func getJobOrchestrators(ctx context.Context, node *core.LivepeerNode, capability string, params JobParameters, timeout time.Duration, respTimeout time.Duration) ([]core.JobToken, error) {
+func getJobOrchestrators(ctx context.Context, node *core.LivepeerNode, capability string, params JobParameters, timeout time.Duration, respTimeout time.Duration) ([]JobToken, error) {
 	orchs := node.OrchestratorPool.GetInfos()
 	//setup the GET request to get the Orchestrator tokens
 	reqSender, err := getJobSender(ctx, node)
@@ -358,7 +358,7 @@ func getJobOrchestrators(ctx context.Context, node *core.LivepeerNode, capabilit
 		return nil, err
 	}
 
-	getOrchJobToken := func(ctx context.Context, orchUrl *url.URL, reqSender core.JobSender, respTimeout time.Duration, tokenCh chan core.JobToken, errCh chan error) {
+	getOrchJobToken := func(ctx context.Context, orchUrl *url.URL, reqSender JobSender, respTimeout time.Duration, tokenCh chan JobToken, errCh chan error) {
 		start := time.Now()
 		tokenReq, err := http.NewRequestWithContext(ctx, "GET", orchUrl.String()+"/process/token", nil)
 		reqSenderStr, _ := json.Marshal(reqSender)
@@ -392,7 +392,7 @@ func getJobOrchestrators(ctx context.Context, node *core.LivepeerNode, capabilit
 			errCh <- err
 			return
 		}
-		var jobToken core.JobToken
+		var jobToken JobToken
 		err = json.Unmarshal(token, &jobToken)
 		if err != nil {
 			clog.Errorf(ctx, "Failed to unmarshal token from Orchestrator %v err=%v", orchUrl.String(), err)
@@ -403,11 +403,11 @@ func getJobOrchestrators(ctx context.Context, node *core.LivepeerNode, capabilit
 		tokenCh <- jobToken
 	}
 
-	var jobTokens []core.JobToken
+	var jobTokens []JobToken
 	timedOut := false
 	nbResp := 0
 	numAvailableOrchs := node.OrchestratorPool.Size()
-	tokenCh := make(chan core.JobToken, numAvailableOrchs)
+	tokenCh := make(chan JobToken, numAvailableOrchs)
 	errCh := make(chan error, numAvailableOrchs)
 
 	tokensCtx, cancel := context.WithTimeout(clog.Clone(context.Background(), ctx), timeout)
@@ -443,7 +443,7 @@ func getJobOrchestrators(ctx context.Context, node *core.LivepeerNode, capabilit
 	return jobTokens, nil
 }
 
-func getJobSender(ctx context.Context, node *core.LivepeerNode) (*core.JobSender, error) {
+func getJobSender(ctx context.Context, node *core.LivepeerNode) (*JobSender, error) {
 	gateway := node.OrchestratorPool.Broadcaster()
 	orchReq, err := genOrchestratorReq(gateway)
 	if err != nil {
@@ -451,7 +451,7 @@ func getJobSender(ctx context.Context, node *core.LivepeerNode) (*core.JobSender
 		return nil, err
 	}
 	addr := ethcommon.BytesToAddress(orchReq.Address)
-	jobSender := &core.JobSender{
+	jobSender := &JobSender{
 		Addr: addr.Hex(),
 		Sig:  "0x" + hex.EncodeToString(orchReq.Sig),
 	}
@@ -467,10 +467,10 @@ func genOrchestratorReq(b common.Broadcaster) (*net.OrchestratorRequest, error) 
 	return &net.OrchestratorRequest{Address: b.Address().Bytes(), Sig: sig}, nil
 }
 
-func getToken(ctx context.Context, respTimeout time.Duration, orchUrl, capability, sender, senderSig string) (*core.JobToken, error) {
+func getToken(ctx context.Context, respTimeout time.Duration, orchUrl, capability, sender, senderSig string) (*JobToken, error) {
 	start := time.Now()
 	tokenReq, err := http.NewRequestWithContext(ctx, "GET", orchUrl+"/process/token", nil)
-	jobSender := core.JobSender{Addr: sender, Sig: senderSig}
+	jobSender := JobSender{Addr: sender, Sig: senderSig}
 
 	reqSenderStr, _ := json.Marshal(jobSender)
 	tokenReq.Header.Set(jobEthAddressHdr, base64.StdEncoding.EncodeToString(reqSenderStr))
@@ -481,7 +481,7 @@ func getToken(ctx context.Context, respTimeout time.Duration, orchUrl, capabilit
 	}
 
 	var resp *http.Response
-	var jobToken core.JobToken
+	var jobToken JobToken
 	var attempt int
 	var backoff time.Duration = 100 * time.Millisecond
 	deadline := time.Now().Add(respTimeout)
