@@ -811,14 +811,16 @@ func (bsg *BYOCGatewayServer) StartStreamWhipIngest(whipServer *media.WHIPServer
 			go bsg.runStats(statsContext, whipConn, streamId, stream.Pipeline, stream.streamParams.liveParams.requestID)
 
 			whipConn.AwaitClose()
-			stream, err := bsg.streamPipeline(streamId)
-			if err != nil {
-				clog.Errorf(ctx, "Error getting stream pipeline for stream %s: %s", streamId, err)
-				return
-			}
-			stream.streamParams.liveParams.segmentReader.Close()
-			bsg.stopStreamPipeline(streamId, nil)
-			clog.Info(ctx, "Live cleaned up")
+
+			//Do not clean up stream on WHIP connection closed.  Allow for reconnecting if stream is still active.
+			//stream, err := bsg.streamPipeline(streamId)
+			//if err != nil {
+			//	clog.Errorf(ctx, "Error getting stream pipeline for stream %s: %s", streamId, err)
+			//	return
+			//}
+			//stream.streamParams.liveParams.segmentReader.Close()
+			//bsg.stopStreamPipeline(streamId, nil)
+			//clog.Info(ctx, "Live cleaned up")
 		}()
 
 		if whipServer == nil {
