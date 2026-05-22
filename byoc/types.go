@@ -37,6 +37,7 @@ const (
 // Error variables
 var (
 	errNoTimeoutSet         = errors.New("no timeout_seconds set with request, timeout_seconds is required")
+	errNoCapabilitySet      = errors.New("no capability set with request, capability is required")
 	errNoCapabilityCapacity = errors.New("No capacity available for capability")
 	errNoJobCreds           = errors.New("Could not verify job creds")
 	errPaymentError         = errors.New("Could not parse payment")
@@ -138,6 +139,7 @@ type JobToken struct {
 	Price             *net.PriceInfo    `json:"price,omitempty"`
 	ServiceAddr       string            `json:"service_addr,omitempty"`
 	AvailableCapacity int64             `json:"available_capacity,omitempty"`
+	DiscoveryTimeMs   int64             `json:"discovery_time_ms,omitempty"`
 
 	LastNonce uint32
 }
@@ -153,6 +155,11 @@ func (jt JobToken) Address() string {
 
 func (jt JobToken) URL() string {
 	return jt.ServiceAddr
+}
+
+type DiscoveryResponse struct {
+	Capability    string     `json:"capability"`
+	Orchestrators []JobToken `json:"orchestrators"`
 }
 
 type JobSender struct {

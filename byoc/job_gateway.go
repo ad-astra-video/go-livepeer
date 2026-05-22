@@ -41,6 +41,49 @@ func (bsg *BYOCGatewayServer) SubmitJob() http.Handler {
 	})
 }
 
+func (bsg *BYOCGatewayServer) DiscoverOrchestrators() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		bsg.discoverOrchestrators(ctx, w, r)
+	})
+}
+
+func (bsg *BYOCGatewayServer) discoverOrchestrators(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	jobReqHdr := r.Header.Get(jobRequestHdr)
+	if jobReqHdr == "" {
+		http.Error(w, fmt.Sprintf("Must have capability and timeout_seconds in %s header", jobRequestHdr), http.StatusBadRequest)
+		return
+	}
+
+	jobReq, jobParams, err := parseDiscoveryRequest(jobReqHdr)
+	if err != nil {
+		clog.Errorf(ctx, "Error parsing discovery request: %v", err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	searchTimeout := time.Duration(jobReq.Timeout) * time.Second
+	orchs, err := getJobOrchestrators(ctx, bsg.node, jobReq.Capability, jobParams, searchTimeout, searchTimeout, true)
+	if err != nil {
+		clog.Errorf(ctx, "Error discovering orchestrators for capability=%s err=%v", jobReq.Capability, err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	resp := DiscoveryResponse{Capability: jobReq.Capability, Orchestrators: orchs}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		clog.Errorf(ctx, "Error encoding discovery response: %v", err)
+	}
+}
+
 func (bsg *BYOCGatewayServer) submitJob(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 
 	gatewayJob, err := bsg.setupGatewayJob(ctx, r.Header.Get(jobRequestHdr), r.Header.Get(jobOrchSearchTimeoutHdr), r.Header.Get(jobOrchSearchRespTimeoutHdr), false)
@@ -161,7 +204,7 @@ func (bsg *BYOCGatewayServer) submitJob(ctx context.Context, w http.ResponseWrit
 						line := scanner.Text()
 						respChan <- line
 						if strings.Contains(line, "[DONE]") {
-							break
+							return
 						}
 					}
 				}
@@ -283,7 +326,7 @@ func (bsg *BYOCGatewayServer) setupGatewayJob(ctx context.Context, jobReqHdr str
 		jobReq.OrchSearchRespTimeout = respTimeout
 
 		//get pool of Orchestrators that can do the job
-		orchs, err = getJobOrchestrators(ctx, bsg.node, jobReq.Capability, jobParams, jobReq.OrchSearchTimeout, jobReq.OrchSearchRespTimeout)
+		orchs, err = getJobOrchestrators(ctx, bsg.node, jobReq.Capability, jobParams, jobReq.OrchSearchTimeout, jobReq.OrchSearchRespTimeout, false)
 		if err != nil {
 			return nil, errors.New(fmt.Sprintf("Unable to find orchestrators for capability %v err=%v", jobReq.Capability, err))
 		}
@@ -336,14 +379,34 @@ func (bsg *BYOCGatewayServer) verifyJobCreds(jobCreds string) (*JobRequest, erro
 	return jobData, nil
 }
 
-func getJobOrchestrators(ctx context.Context, node *core.LivepeerNode, capability string, params JobParameters, timeout time.Duration, respTimeout time.Duration) ([]JobToken, error) {
-	orchs := node.OrchestratorPool.GetInfos()
-	//setup the GET request to get the Orchestrator tokens
+func parseDiscoveryRequest(jobCreds string) (*JobRequest, JobParameters, error) {
+	jobData, err := parseJobRequest(jobCreds)
+	if err != nil {
+		return nil, JobParameters{}, err
+	}
+
+	if jobData.Capability == "" {
+		return nil, JobParameters{}, errNoCapabilitySet
+	}
+
+	var jobParams JobParameters
+	if strings.TrimSpace(jobData.Parameters) != "" {
+		if err := json.Unmarshal([]byte(jobData.Parameters), &jobParams); err != nil {
+			return nil, JobParameters{}, fmt.Errorf("Unable to unmarshal job parameters err=%v", err)
+		}
+	}
+
+	return jobData, jobParams, nil
+}
+
+func getJobOrchestrators(ctx context.Context, node *core.LivepeerNode, capability string, params JobParameters, timeout time.Duration, respTimeout time.Duration, includeZeroCapacity bool) ([]JobToken, error) {
 	reqSender, err := getJobSender(ctx, node)
 	if err != nil {
 		clog.Errorf(ctx, "Failed to get job sender err=%v", err)
 		return nil, err
 	}
+
+	orchs := node.OrchestratorPool.GetInfos()
 
 	getOrchJobToken := func(ctx context.Context, orchUrl *url.URL, reqSender JobSender, respTimeout time.Duration, tokenCh chan JobToken, errCh chan error) {
 		start := time.Now()
@@ -388,6 +451,7 @@ func getJobOrchestrators(ctx context.Context, node *core.LivepeerNode, capabilit
 			return
 		}
 
+		jobToken.DiscoveryTimeMs = latency.Milliseconds()
 		tokenCh <- jobToken
 	}
 
@@ -412,13 +476,13 @@ func getJobOrchestrators(ctx context.Context, node *core.LivepeerNode, capabilit
 			continue
 		}
 
-		go getOrchJobToken(ctx, orchs[i].URL, *reqSender, respTimeout, tokenCh, errCh)
+		go getOrchJobToken(tokensCtx, orchs[i].URL, *reqSender, respTimeout, tokenCh, errCh)
 	}
 
 	for nbResp < numAvailableOrchs && len(jobTokens) < numAvailableOrchs {
 		select {
 		case token := <-tokenCh:
-			if token.AvailableCapacity > 0 {
+			if includeZeroCapacity || token.AvailableCapacity > 0 {
 				jobTokens = append(jobTokens, token)
 			}
 			nbResp++

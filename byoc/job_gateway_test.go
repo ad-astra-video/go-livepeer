@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"testing/synctest"
@@ -100,6 +102,85 @@ func TestSubmitJob_MethodNotAllowed(t *testing.T) {
 
 	resp := w.Result()
 	assert.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode)
+}
+
+func TestDiscoverOrchestrators_MethodNotAllowed(t *testing.T) {
+	bsg := &BYOCGatewayServer{node: mockJobLivepeerNode()}
+
+	req := httptest.NewRequest(http.MethodPost, "/process/discovery", nil)
+	w := httptest.NewRecorder()
+
+	bsg.DiscoverOrchestrators().ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Result().StatusCode)
+}
+
+func TestDiscoverOrchestrators_MissingJobRequestHeader(t *testing.T) {
+	bsg := &BYOCGatewayServer{node: mockJobLivepeerNode()}
+
+	req := httptest.NewRequest(http.MethodGet, "/process/discovery", nil)
+	w := httptest.NewRecorder()
+
+	bsg.DiscoverOrchestrators().ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Result().StatusCode)
+}
+
+func TestDiscoverOrchestrators_UsesTimeoutAndReturnsAllSuccessfulTokens(t *testing.T) {
+	var fastURL string
+	fastServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodGet, r.Method)
+		assert.NotEmpty(t, r.Header.Get(jobEthAddressHdr))
+		assert.Equal(t, "test-capability", r.Header.Get(jobCapabilityHdr))
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(JobToken{
+			ServiceAddr:       fastURL,
+			AvailableCapacity: 0,
+			Balance:           1,
+			Price:             &net.PriceInfo{PricePerUnit: 1, PixelsPerUnit: 1},
+		})
+	}))
+	defer fastServer.Close()
+	fastURL = fastServer.URL
+
+	var slowURL string
+	slowServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(2 * time.Second)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(JobToken{
+			ServiceAddr:       slowURL,
+			AvailableCapacity: 4,
+			Balance:           2,
+			Price:             &net.PriceInfo{PricePerUnit: 2, PixelsPerUnit: 1},
+		})
+	}))
+	defer slowServer.Close()
+	slowURL = slowServer.URL
+
+	node := mockJobLivepeerNode()
+	node.OrchestratorPool = newStubOrchestratorPool(node, []string{fastServer.URL, slowServer.URL})
+	bsg := &BYOCGatewayServer{node: node}
+
+	req := httptest.NewRequest(http.MethodGet, "/process/discovery", nil)
+	req.Header.Set(jobRequestHdr, discoveryJobRequestHeader(t, "test-capability", 1, JobParameters{}))
+	w := httptest.NewRecorder()
+
+	bsg.DiscoverOrchestrators().ServeHTTP(w, req)
+
+	resp := w.Result()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+
+	var discoveryResp DiscoveryResponse
+	assert.NoError(t, json.Unmarshal(body, &discoveryResp))
+	assert.Equal(t, "test-capability", discoveryResp.Capability)
+	assert.Len(t, discoveryResp.Orchestrators, 1)
+	assert.Equal(t, int64(0), discoveryResp.Orchestrators[0].AvailableCapacity)
+	assert.GreaterOrEqual(t, discoveryResp.Orchestrators[0].DiscoveryTimeMs, int64(0))
+	assert.True(t, strings.HasPrefix(discoveryResp.Orchestrators[0].ServiceAddr, "http://"))
 }
 
 func TestCreatePayment(t *testing.T) {
@@ -232,6 +313,22 @@ func createTestPayment(capability string) (string, error) {
 	return pmt, nil
 }
 
+func discoveryJobRequestHeader(t *testing.T, capability string, timeoutSeconds int, params JobParameters) string {
+	t.Helper()
+	jobReq := JobRequest{
+		Capability: capability,
+		Timeout:    timeoutSeconds,
+	}
+	if len(params.Orchestrators.Include) > 0 || len(params.Orchestrators.Exclude) > 0 || params.EnableVideoIngress || params.EnableVideoEgress || params.EnableDataOutput {
+		paramsJSON, err := json.Marshal(params)
+		assert.NoError(t, err)
+		jobReq.Parameters = string(paramsJSON)
+	}
+	jobReqJSON, err := json.Marshal(jobReq)
+	assert.NoError(t, err)
+	return base64.StdEncoding.EncodeToString(jobReqJSON)
+}
+
 func mockTicketBatch(count int) *pm.TicketBatch {
 	senderParams := make([]*pm.TicketSenderParams, count)
 	for i := 0; i < count; i++ {
@@ -342,6 +439,7 @@ func TestSubmitJob_OrchestratorSelectionParams(t *testing.T) {
 				params,
 				100*time.Millisecond, // Short timeout for testing
 				50*time.Millisecond,
+				false,
 			)
 
 			if tc.expectedCount == 0 {
