@@ -1122,14 +1122,19 @@ func (n *LivepeerNode) LiveVideoToVideo(ctx context.Context, req worker.GenLiveV
 }
 
 func (orch *orchestrator) RegisterExternalCapability(extCapabilitySettings string) (*ExternalCapability, error) {
+	if orch.node == nil {
+		return nil, errors.New("external capabilities not initialized")
+	}
+	if orch.node.ExternalCapabilities == nil {
+		orch.node.ExternalCapabilities = NewExternalCapabilities()
+	}
+
 	cap, err := orch.node.ExternalCapabilities.RegisterCapability(extCapabilitySettings)
 	if err != nil {
 		return nil, err
 	}
 
-	//set the price for the capability
 	orch.node.SetPriceForExternalCapability("default", cap.Name, cap.GetPrice())
-
 	return cap, nil
 }
 
@@ -1138,52 +1143,33 @@ func (orch *orchestrator) RemoveExternalCapability(extCapability string) error {
 	return nil
 }
 
+func (orch *orchestrator) GetExternalCapability(extCapabilityKey string) (*ExternalCapability, bool) {
+	return orch.node.ExternalCapabilities.GetCapabilityByKey(extCapabilityKey)
+}
+
+func (orch *orchestrator) ReserveExternalCapability(extCapability string) (*ExternalCapability, error) {
+	return orch.node.ExternalCapabilities.ReserveCapability(extCapability)
+}
+
 func (orch *orchestrator) GetUrlForCapability(extCapability string) string {
-	for _, capability := range orch.node.ExternalCapabilities.Capabilities {
-		if capability.Name == extCapability {
-			return capability.Url
-		}
+	if capability, ok := orch.node.ExternalCapabilities.GetCapabilityByName(extCapability); ok {
+		return capability.Url
 	}
 
 	return ""
 }
 
 func (orch *orchestrator) CheckExternalCapabilityCapacity(extCapability string) int64 {
-	if cap, ok := orch.node.ExternalCapabilities.Capabilities[extCapability]; !ok {
-		return 0
-	} else {
-		if cap.Load < cap.Capacity {
-			return int64(cap.Capacity - cap.Load)
-		} else {
-			return 0
-		}
-	}
+	return orch.node.ExternalCapabilities.AvailableCapacity(extCapability)
 }
 
 func (orch *orchestrator) ReserveExternalCapabilityCapacity(extCapability string) error {
-	cap, ok := orch.node.ExternalCapabilities.Capabilities[extCapability]
-	if ok {
-		cap.Mu.Lock()
-		defer cap.Mu.Unlock()
-
-		cap.Load++
-		return nil
-	} else {
-		return errors.New("external capability not found")
-	}
+	_, err := orch.node.ExternalCapabilities.ReserveCapability(extCapability)
+	return err
 }
 
 func (orch *orchestrator) FreeExternalCapabilityCapacity(extCapability string) error {
-	cap, ok := orch.node.ExternalCapabilities.Capabilities[extCapability]
-	if ok {
-		cap.Mu.Lock()
-		defer cap.Mu.Unlock()
-
-		cap.Load--
-		return nil
-	} else {
-		return errors.New("external capability not found")
-	}
+	return orch.node.ExternalCapabilities.FreeCapability(extCapability)
 }
 
 func (orch *orchestrator) JobPriceInfo(sender ethcommon.Address, jobCapability string) (*net.PriceInfo, error) {

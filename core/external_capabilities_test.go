@@ -45,10 +45,11 @@ func TestExternalCapabilities_RegisterCapability(t *testing.T) {
 		assert.Equal(t, int64(1000), cap.PriceScaling)
 		assert.Equal(t, "wei", cap.PriceCurrency)
 		assert.NotNil(t, cap.price)
+		assert.Contains(t, cap.Key, "runner_")
 
 		// Verify it's in the map
-		assert.Contains(t, extCaps.Capabilities, "test-cap")
-		assert.Equal(t, cap, extCaps.Capabilities["test-cap"])
+		assert.Contains(t, extCaps.Capabilities, cap.Key)
+		assert.Equal(t, cap, extCaps.Capabilities[cap.Key])
 	})
 
 	t.Run("Register with missing price_scaling", func(t *testing.T) {
@@ -80,6 +81,7 @@ func TestExternalCapabilities_RegisterCapability(t *testing.T) {
 	t.Run("Update existing capability", func(t *testing.T) {
 		// First register a capability
 		capJSON := `{
+				"id": "runner-a",
 			"name": "update-test",
 			"description": "Original description",
 			"url": "http://localhost:8000",
@@ -94,6 +96,7 @@ func TestExternalCapabilities_RegisterCapability(t *testing.T) {
 
 		// Now update it
 		updatedJSON := `{
+				"id": "runner-a",
 			"name": "update-test",
 			"description": "Updated description",
 			"url": "http://localhost:9000",
@@ -115,10 +118,76 @@ func TestExternalCapabilities_RegisterCapability(t *testing.T) {
 		assert.Equal(t, int64(2000), updatedCap.PriceScaling)
 
 		// Verify it's in the map
-		storedCap := extCaps.Capabilities["update-test"]
+		storedCap := extCaps.Capabilities["runner-a"]
 		assert.Equal(t, "http://localhost:9000", storedCap.Url)
 		assert.Equal(t, 10, storedCap.Capacity)
 		assert.NotNil(t, storedCap.price)
+	})
+
+	t.Run("Register multiple runners and sort by order", func(t *testing.T) {
+		firstJSON := `{
+			"name": "multi-cap",
+			"url": "http://10.0.0.1:8000",
+			"order": 20,
+			"capacity": 1,
+			"price_per_unit": 100,
+			"price_scaling": 1,
+			"currency": "wei"
+		}`
+		secondJSON := `{
+			"name": "multi-cap",
+			"id": "runner-b",
+			"url": "http://10.0.0.2:8000",
+			"order": 10,
+			"capacity": 2,
+			"price_per_unit": 100,
+			"price_scaling": 1,
+			"currency": "wei"
+		}`
+
+		_, err := extCaps.RegisterCapability(firstJSON)
+		require.NoError(t, err)
+		_, err = extCaps.RegisterCapability(secondJSON)
+		require.NoError(t, err)
+
+		caps := extCaps.GetCapabilitiesByName("multi-cap")
+		require.Len(t, caps, 2)
+		assert.Equal(t, "runner-b", caps[0].Key)
+		assert.Contains(t, caps[1].Key, "runner_")
+
+		reserved, err := extCaps.ReserveCapability("multi-cap")
+		require.NoError(t, err)
+		assert.Equal(t, "runner-b", reserved.Key)
+		assert.Equal(t, int64(2), extCaps.AvailableCapacity("multi-cap"))
+		require.NoError(t, extCaps.FreeCapability("runner-b"))
+	})
+
+	t.Run("Register without id generates unique runner keys", func(t *testing.T) {
+		firstJSON := `{
+			"name": "generated-key-cap",
+			"url": "http://10.0.0.1:8000",
+			"capacity": 1,
+			"price_per_unit": 100,
+			"price_scaling": 1,
+			"currency": "wei"
+		}`
+		secondJSON := `{
+			"name": "generated-key-cap",
+			"url": "http://10.0.0.1:8000",
+			"capacity": 1,
+			"price_per_unit": 100,
+			"price_scaling": 1,
+			"currency": "wei"
+		}`
+
+		firstCap, err := extCaps.RegisterCapability(firstJSON)
+		require.NoError(t, err)
+		secondCap, err := extCaps.RegisterCapability(secondJSON)
+		require.NoError(t, err)
+
+		assert.NotEqual(t, firstCap.Key, secondCap.Key)
+		assert.Contains(t, firstCap.Key, "runner_")
+		assert.Contains(t, secondCap.Key, "runner_")
 	})
 }
 
@@ -139,11 +208,11 @@ func TestExternalCapabilities_RemoveCapability(t *testing.T) {
 
 		_, err := extCaps.RegisterCapability(capJSON)
 		require.NoError(t, err)
-		assert.Contains(t, extCaps.Capabilities, "to-remove")
+		assert.Contains(t, extCaps.Capabilities, "localhost:8000")
 
 		// Now remove it
 		extCaps.RemoveCapability("to-remove")
-		assert.NotContains(t, extCaps.Capabilities, "to-remove")
+		assert.NotContains(t, extCaps.Capabilities, "localhost:8000")
 	})
 
 	t.Run("Remove non-existent capability", func(t *testing.T) {
@@ -161,6 +230,56 @@ func TestExternalCapabilities_RemoveCapability(t *testing.T) {
 		// Should not panic
 		brokenCaps.RemoveCapability("anything")
 	})
+}
+
+func TestExternalCapabilities_MultipleRunnersLifecycle(t *testing.T) {
+	extCaps := NewExternalCapabilities()
+
+	firstRunner := `{
+		"name": "multi-runner-cap",
+		"id": "runner-a",
+		"url": "http://10.0.0.1:9000",
+		"order": 20,
+		"capacity": 1,
+		"price_per_unit": 100,
+		"price_scaling": 1,
+		"currency": "wei"
+	}`
+	secondRunner := `{
+		"name": "multi-runner-cap",
+		"id": "runner-b",
+		"url": "http://10.0.0.2:9000",
+		"order": 10,
+		"capacity": 2,
+		"price_per_unit": 100,
+		"price_scaling": 1,
+		"currency": "wei"
+	}`
+
+	_, err := extCaps.RegisterCapability(firstRunner)
+	require.NoError(t, err)
+	_, err = extCaps.RegisterCapability(secondRunner)
+	require.NoError(t, err)
+
+	runners := extCaps.GetCapabilitiesByName("multi-runner-cap")
+	require.Len(t, runners, 2)
+	assert.Equal(t, "runner-b", runners[0].Key)
+	assert.Equal(t, "runner-a", runners[1].Key)
+	assert.Equal(t, int64(3), extCaps.AvailableCapacity("multi-runner-cap"))
+
+	selected, err := extCaps.ReserveCapability("multi-runner-cap")
+	require.NoError(t, err)
+	assert.Equal(t, "runner-b", selected.Key)
+	assert.Equal(t, int64(2), extCaps.AvailableCapacity("multi-runner-cap"))
+
+	extCaps.RemoveCapability("runner-b")
+	runners = extCaps.GetCapabilitiesByName("multi-runner-cap")
+	require.Len(t, runners, 1)
+	assert.Equal(t, "runner-a", runners[0].Key)
+	assert.Equal(t, int64(1), extCaps.AvailableCapacity("multi-runner-cap"))
+
+	extCaps.RemoveCapability("multi-runner-cap")
+	assert.Empty(t, extCaps.GetCapabilitiesByName("multi-runner-cap"))
 }
 
 func TestExternalCapability_GetPrice(t *testing.T) {

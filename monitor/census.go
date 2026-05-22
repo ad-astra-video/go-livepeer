@@ -130,6 +130,8 @@ type (
 		kEventType                    tag.Key
 		kPipeline                     tag.Key
 		kModelName                    tag.Key
+		kCapability                   tag.Key
+		kRunnerKey                    tag.Key
 		mSegmentSourceAppeared        *stats.Int64Measure
 		mSegmentEmerged               *stats.Int64Measure
 		mSegmentEmergedUnprocessed    *stats.Int64Measure
@@ -211,25 +213,27 @@ type (
 		mSceneClassification *stats.Int64Measure
 
 		// Metrics for AI jobs
-		mAIModelsRequested          *stats.Int64Measure
-		mAIRequestLatencyScore      *stats.Float64Measure
-		mAIRequestPrice             *stats.Float64Measure
-		mAIRequestError             *stats.Int64Measure
-		mAIResultDownloaded         *stats.Int64Measure
-		mAIResultDownloadTime       *stats.Float64Measure
-		mAIResultUploaded           *stats.Int64Measure
-		mAIResultUploadTime         *stats.Float64Measure
-		mAIResultSaveFailed         *stats.Int64Measure
-		mAIContainersInUse          *stats.Int64Measure
-		mAIContainersIdle           *stats.Int64Measure
-		mLiveAIPricePerPixel        *stats.Float64Measure
-		aiContainersCapacityByModel map[string]*ModelAICapacities
-		mAIGPUsIdle                 *stats.Int64Measure
-		mAICurrentLivePipelines     *stats.Int64Measure
-		aiLiveSessionsByPipeline    map[string]int
-		mAIFirstSegmentDelay        *stats.Int64Measure
-		mAILiveAttempts             *stats.Int64Measure
-		mAINumOrchs                 *stats.Int64Measure
+		mAIModelsRequested           *stats.Int64Measure
+		mAIRunnerAllocations         *stats.Int64Measure
+		mAIRunnerAllocationsInFlight *stats.Int64Measure
+		mAIRequestLatencyScore       *stats.Float64Measure
+		mAIRequestPrice              *stats.Float64Measure
+		mAIRequestError              *stats.Int64Measure
+		mAIResultDownloaded          *stats.Int64Measure
+		mAIResultDownloadTime        *stats.Float64Measure
+		mAIResultUploaded            *stats.Int64Measure
+		mAIResultUploadTime          *stats.Float64Measure
+		mAIResultSaveFailed          *stats.Int64Measure
+		mAIContainersInUse           *stats.Int64Measure
+		mAIContainersIdle            *stats.Int64Measure
+		mLiveAIPricePerPixel         *stats.Float64Measure
+		aiContainersCapacityByModel  map[string]*ModelAICapacities
+		mAIGPUsIdle                  *stats.Int64Measure
+		mAICurrentLivePipelines      *stats.Int64Measure
+		aiLiveSessionsByPipeline     map[string]int
+		mAIFirstSegmentDelay         *stats.Int64Measure
+		mAILiveAttempts              *stats.Int64Measure
+		mAINumOrchs                  *stats.Int64Measure
 
 		mAIWhipTransportBytesReceived *stats.Int64Measure
 		mAIWhipTransportBytesSent     *stats.Int64Measure
@@ -307,6 +311,8 @@ func InitCensus(nodeType NodeType, version string) {
 	census.kSegClassName = tag.MustNewKey("seg_class_name")
 	census.kModelName = tag.MustNewKey("model_name")
 	census.kPipeline = tag.MustNewKey("pipeline")
+	census.kCapability = tag.MustNewKey("capability")
+	census.kRunnerKey = tag.MustNewKey("runner_key")
 	census.ctx, err = tag.New(ctx, tag.Insert(census.kNodeType, string(nodeType)), tag.Insert(census.kNodeID, NodeID))
 	if err != nil {
 		glog.Exit("Error creating context", err)
@@ -398,6 +404,8 @@ func InitCensus(nodeType NodeType, version string) {
 
 	// Metrics for AI jobs
 	census.mAIModelsRequested = stats.Int64("ai_models_requested", "Number of AI models requested over time", "tot")
+	census.mAIRunnerAllocations = stats.Int64("ai_runner_allocations_total", "Number of jobs allocated to runner keys", "tot")
+	census.mAIRunnerAllocationsInFlight = stats.Int64("ai_runner_allocations_in_flight", "Number of in-flight jobs allocated to runner keys", "tot")
 	census.mAIRequestLatencyScore = stats.Float64("ai_request_latency_score", "AI request latency score, based on smallest pipeline unit", "")
 	census.mAIRequestPrice = stats.Float64("ai_request_price", "AI request price per unit, based on smallest pipeline unit", "")
 	census.mAIRequestError = stats.Int64("ai_request_errors", "Errors during AI request processing", "tot")
@@ -983,6 +991,20 @@ func InitCensus(nodeType NodeType, version string) {
 			Description: "Number of AI models requested over time",
 			TagKeys:     append([]tag.Key{census.kPipeline, census.kModelName}, baseTags...),
 			Aggregation: view.Count(),
+		},
+		{
+			Name:        "ai_runner_allocations_total",
+			Measure:     census.mAIRunnerAllocations,
+			Description: "Number of jobs allocated to runner keys",
+			TagKeys:     append([]tag.Key{census.kCapability, census.kRunnerKey}, baseTags...),
+			Aggregation: view.Count(),
+		},
+		{
+			Name:        "ai_runner_allocations_in_flight",
+			Measure:     census.mAIRunnerAllocationsInFlight,
+			Description: "Number of in-flight jobs allocated to runner keys",
+			TagKeys:     append([]tag.Key{census.kCapability, census.kRunnerKey}, baseTags...),
+			Aggregation: view.LastValue(),
 		},
 		{
 			Name:        "ai_request_latency_score",
@@ -2182,6 +2204,30 @@ func AIJobProcessed(ctx context.Context, pipeline string, model string, jobInfo 
 	census.recordModelRequested(pipeline, model)
 	census.recordAIJobLatencyScore(pipeline, model, jobInfo.LatencyScore)
 	census.recordAIJobPricePerUnit(pipeline, model, jobInfo.PricePerUnit)
+}
+
+func AIRunnerAllocated(capability string, runnerKey string) {
+	if !Enabled || capability == "" || runnerKey == "" {
+		return
+	}
+
+	if err := stats.RecordWithTags(census.ctx,
+		[]tag.Mutator{tag.Insert(census.kCapability, capability), tag.Insert(census.kRunnerKey, runnerKey)},
+		census.mAIRunnerAllocations.M(1)); err != nil {
+		glog.Errorf("Error recording metrics err=%q", err)
+	}
+}
+
+func AIRunnerAllocationsInFlight(capability string, runnerKey string, allocations int64) {
+	if !Enabled || capability == "" || runnerKey == "" {
+		return
+	}
+
+	if err := stats.RecordWithTags(census.ctx,
+		[]tag.Mutator{tag.Insert(census.kCapability, capability), tag.Insert(census.kRunnerKey, runnerKey)},
+		census.mAIRunnerAllocationsInFlight.M(allocations)); err != nil {
+		glog.Errorf("Error recording metrics err=%q", err)
+	}
 }
 
 // recordAIJobLatencyScore records the latency score for a processed AI job.

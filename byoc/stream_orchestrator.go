@@ -74,7 +74,7 @@ func (bso *BYOCOrchestratorServer) StartStream() http.Handler {
 		// reset trickle channels and release capacity on failure
 		defer func() {
 			if failedToStartStream {
-				bso.orch.FreeExternalCapabilityCapacity(orchJob.Req.Capability)
+				bso.orch.FreeExternalCapabilityCapacity(orchJob.RunnerKey)
 				//close the trickle channels
 				if pubCh != nil {
 					pubCh.Close()
@@ -149,7 +149,7 @@ func (bso *BYOCOrchestratorServer) StartStream() http.Handler {
 			return
 		}
 
-		req, err := bso.createWorkerReq(ctx, workerRoute, orchJob.Req.Capability, orchJob.Req.ID, bytes.NewBuffer(reqBodyBytes))
+		req, err := bso.createWorkerReq(ctx, workerRoute, orchJob.RunnerKey, orchJob.Req.ID, bytes.NewBuffer(reqBodyBytes))
 		if err != nil {
 			clog.Errorf(ctx, "failed to create worker request err=%v", err)
 			respondWithError(w, "Failed to create worker request", http.StatusInternalServerError)
@@ -169,7 +169,7 @@ func (bso *BYOCOrchestratorServer) StartStream() http.Handler {
 			return
 		}
 
-		statusCode, respBody := bso.processWorkerResp(ctx, orchJob.Req.Capability, resp)
+		statusCode, respBody := bso.processWorkerResp(ctx, orchJob.RunnerKey, resp)
 		if statusCode > 399 {
 			bso.chargeForCompute(start, orchJob.JobPrice, orchJob.Sender, orchJob.Req.Capability)
 			w.Header().Set(jobPaymentBalanceHdr, bso.getPaymentBalance(orchJob.Sender, orchJob.Req.Capability).FloatString(0))
@@ -193,6 +193,7 @@ func (bso *BYOCOrchestratorServer) StartStream() http.Handler {
 			failedToStartStream = true
 			return
 		}
+		stream.SetRunner(orchJob.RunnerKey, orchJob.Req.CapabilityUrl)
 
 		stream.SetChannels(pubCh, subCh, controlPubCh, eventsCh, dataCh)
 
@@ -231,12 +232,12 @@ func (bso *BYOCOrchestratorServer) monitorOrchStream(job *orchJob) {
 	for {
 		select {
 		case <-stream.StreamCtx.Done():
-			bso.orch.FreeExternalCapabilityCapacity(capability)
+			bso.orch.FreeExternalCapabilityCapacity(stream.RunnerKey)
 			clog.Infof(ctx, "Stream ended, stopping payment monitoring and released capacity")
 			return
 		case <-pmtTicker.C:
 			// Check payment status
-			extCap, ok := bso.node.ExternalCapabilities.Capabilities[capability]
+			extCap, ok := bso.orch.GetExternalCapability(stream.RunnerKey)
 			if !ok {
 				clog.Errorf(ctx, "Capability not found for payment monitoring, exiting monitoring capability=%s", capability)
 				return
@@ -274,7 +275,11 @@ func (bso *BYOCOrchestratorServer) monitorOrchStream(job *orchJob) {
 			// if not, send stop to worker and exit monitoring
 			stream, exists := bso.node.ExternalCapabilities.GetStream(streamID)
 			if !exists {
-				req, err := bso.createWorkerReq(ctx, job.Req.CapabilityUrl+"/stream/stop", job.Req.Capability, streamID, nil)
+				workerURL := stream.WorkerURL
+				if workerURL == "" {
+					workerURL = job.Req.CapabilityUrl
+				}
+				req, err := bso.createWorkerReq(ctx, workerURL+"/stream/stop", stream.RunnerKey, streamID, nil)
 				if err != nil {
 					clog.Errorf(ctx, "Error creating request to worker %v: %v", job.Req.CapabilityUrl, err)
 					return
@@ -327,7 +332,16 @@ func (bso *BYOCOrchestratorServer) StopStream() http.Handler {
 		r.Body.Close()
 
 		workerRoute := orchJob.Req.CapabilityUrl + "/stream/stop"
-		req, err := bso.createWorkerReq(ctx, workerRoute, orchJob.Req.Capability, jobDetails.StreamId, bytes.NewBuffer(body))
+		runnerKey := orchJob.RunnerKey
+		if stream, ok := bso.node.ExternalCapabilities.GetStream(jobDetails.StreamId); ok {
+			if stream.WorkerURL != "" {
+				workerRoute = stream.WorkerURL + "/stream/stop"
+			}
+			if stream.RunnerKey != "" {
+				runnerKey = stream.RunnerKey
+			}
+		}
+		req, err := bso.createWorkerReq(ctx, workerRoute, runnerKey, jobDetails.StreamId, bytes.NewBuffer(body))
 		if err != nil {
 			clog.Errorf(ctx, "failed to create /stream/stop request to worker err=%v", err)
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -341,7 +355,7 @@ func (bso *BYOCOrchestratorServer) StopStream() http.Handler {
 		var respBody []byte
 		respStatusCode := http.StatusOK // default to 200, if not nil will be overwritten
 		if resp != nil {
-			respStatusCode, respBody = bso.processWorkerResp(ctx, orchJob.Req.Capability, resp)
+			respStatusCode, respBody = bso.processWorkerResp(ctx, runnerKey, resp)
 		}
 
 		// Stop the stream and free capacity
@@ -378,7 +392,16 @@ func (bso *BYOCOrchestratorServer) UpdateStream() http.Handler {
 		r.Body.Close()
 
 		workerRoute := orchJob.Req.CapabilityUrl + "/stream/params"
-		req, err := bso.createWorkerReq(ctx, workerRoute, orchJob.Req.Capability, jobDetails.StreamId, bytes.NewBuffer(body))
+		runnerKey := orchJob.RunnerKey
+		if stream, ok := bso.node.ExternalCapabilities.GetStream(jobDetails.StreamId); ok {
+			if stream.WorkerURL != "" {
+				workerRoute = stream.WorkerURL + "/stream/params"
+			}
+			if stream.RunnerKey != "" {
+				runnerKey = stream.RunnerKey
+			}
+		}
+		req, err := bso.createWorkerReq(ctx, workerRoute, runnerKey, jobDetails.StreamId, bytes.NewBuffer(body))
 		if err != nil {
 			clog.Errorf(ctx, "failed to create /stream/params request to worker err=%v", err)
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -393,7 +416,7 @@ func (bso *BYOCOrchestratorServer) UpdateStream() http.Handler {
 			return
 		}
 
-		statusCode, respBody := bso.processWorkerResp(ctx, orchJob.Req.Capability, resp)
+		statusCode, respBody := bso.processWorkerResp(ctx, runnerKey, resp)
 
 		w.WriteHeader(statusCode)
 		w.Write(respBody)
@@ -402,7 +425,7 @@ func (bso *BYOCOrchestratorServer) UpdateStream() http.Handler {
 
 // createWorkerReq creates an HTTP request to send to the worker.
 // handles setting stream id and auth headers for worker
-func (bso *BYOCOrchestratorServer) createWorkerReq(ctx context.Context, workerRoute, capability, streamId string, body io.Reader) (*http.Request, error) {
+func (bso *BYOCOrchestratorServer) createWorkerReq(ctx context.Context, workerRoute, runnerKey, streamId string, body io.Reader) (*http.Request, error) {
 	req, err := http.NewRequestWithContext(ctx, "POST", workerRoute, body)
 	if err != nil {
 		return nil, err
@@ -413,8 +436,8 @@ func (bso *BYOCOrchestratorServer) createWorkerReq(ctx context.Context, workerRo
 		req.Header.Add("X-Stream-Id", streamId)
 	}
 
-	// Add Authorization header if auth token is set for this capability
-	if extCap, ok := bso.node.ExternalCapabilities.Capabilities[capability]; ok {
+	// Add Authorization header if auth token is set for the selected runner.
+	if extCap, ok := bso.orch.GetExternalCapability(runnerKey); ok {
 		if extCap.AuthToken != "" {
 			req.Header.Add("Authorization", "Bearer "+extCap.AuthToken)
 		}
@@ -425,7 +448,7 @@ func (bso *BYOCOrchestratorServer) createWorkerReq(ctx context.Context, workerRo
 
 // processWorkerResp processes the worker response and returns the statusCode and respBody.
 // It handles 401 Unauthorized responses by removing the capability.
-func (bso *BYOCOrchestratorServer) processWorkerResp(ctx context.Context, capability string, resp *http.Response) (int, []byte) {
+func (bso *BYOCOrchestratorServer) processWorkerResp(ctx context.Context, runnerKey string, resp *http.Response) (int, []byte) {
 	statusCode := resp.StatusCode
 	respBody, err := io.ReadAll(resp.Body)
 	resp.Body.Close()
@@ -440,8 +463,8 @@ func (bso *BYOCOrchestratorServer) processWorkerResp(ctx context.Context, capabi
 		// Check for 401 Unauthorized - remove capability so worker can re-register with correct token
 		// return 500 error to the gateway. Gateway will move on to another Orchestrator if available.
 		if statusCode == http.StatusUnauthorized {
-			clog.Errorf(ctx, "received 401 Unauthorized from worker, removing capability %v", capability)
-			bso.orch.RemoveExternalCapability(capability)
+			clog.Errorf(ctx, "received 401 Unauthorized from worker, removing runner %v", runnerKey)
+			bso.orch.RemoveExternalCapability(runnerKey)
 			statusCode = http.StatusInternalServerError
 			respBody = []byte("Orchestrator worker failure")
 		}

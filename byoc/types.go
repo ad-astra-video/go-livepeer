@@ -51,6 +51,8 @@ var (
 type Orchestrator interface {
 	TranscoderSecret() string
 	VerifySig(addr ethcommon.Address, msg string, sig []byte) bool
+	ReserveExternalCapability(capability string) (*core.ExternalCapability, error)
+	GetExternalCapability(capabilityKey string) (*core.ExternalCapability, bool)
 	ReserveExternalCapabilityCapacity(capability string) error
 	GetUrlForCapability(capability string) string
 	JobPriceInfo(sender ethcommon.Address, capability string) (*net.PriceInfo, error)
@@ -174,8 +176,9 @@ type orchJob struct {
 	Params  *JobParameters
 
 	// Orchestrator fields
-	Sender   ethcommon.Address
-	JobPrice *net.PriceInfo
+	Sender    ethcommon.Address
+	JobPrice  *net.PriceInfo
+	RunnerKey string
 }
 
 type StartRequest struct {

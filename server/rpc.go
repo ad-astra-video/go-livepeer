@@ -252,7 +252,11 @@ func StartTranscodeServer(orch Orchestrator, bind string, mux *http.ServeMux, wo
 		lp.transRPC.Handle("/aiResults", lp.AIResults())
 	}
 	//API for dynamic capabilities
-	lp.byocSrv = byoc.NewBYOCOrchestratorServer(n, orch, lp.trickleSrv, TrickleHTTPPath, lp.transRPC)
+	byocOrch, ok := orch.(byoc.Orchestrator)
+	if !ok {
+		return fmt.Errorf("orchestrator does not implement byoc.Orchestrator")
+	}
+	lp.byocSrv = byoc.NewBYOCOrchestratorServer(n, byocOrch, lp.trickleSrv, TrickleHTTPPath, lp.transRPC)
 
 	cert, key, err := getCert(orch.ServiceURI(), workDir)
 	if err != nil {
