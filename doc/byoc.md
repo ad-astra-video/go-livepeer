@@ -212,3 +212,57 @@ Response will be:
   "reversed": "!COYB reepevil ,olleH"
 }
 ```
+
+### Response modes
+
+BYOC request endpoints under `/process/request/{capability}` support three response patterns from the runner container:
+
+- Regular HTTP responses, such as `application/json`, where the full response body is returned once processing completes.
+- Server-Sent Events using `text/event-stream`.
+- Streamed HTTP responses for non-SSE content types, such as `application/x-ndjson` or `multipart/mixed`, where chunks are forwarded to the caller as they arrive.
+
+For streamed responses, the Gateway preserves the runner response `Content-Type`.
+
+Payment balance behavior:
+
+- For regular non-streaming responses, `Livepeer-Balance` is the final balance after the request completes.
+- For SSE responses, `Livepeer-Balance` in the initial headers is the starting balance for the stream, and the final balance is sent in the stream before `[DONE]`.
+- For streamed HTTP non-SSE responses, `Livepeer-Balance` in the initial headers is the starting balance for the stream. For structured streamed responses such as `application/x-ndjson`, the final balance can be sent as the last streamed record. For binary streaming, prefer `multipart/mixed` so the final balance can be sent as a separate JSON part.
+
+Example streamed HTTP response using `application/x-ndjson`:
+
+```http
+HTTP/1.1 200 OK
+Content-Type: application/x-ndjson
+Livepeer-Balance: 17
+
+{"chunk":1}
+{"chunk":2}
+{"balance": 9}
+```
+
+In this example, `17` is the initial balance advertised when the stream begins, and `9` is the final balance after the request finishes.
+
+Example streamed HTTP response for binary data using `multipart/mixed`:
+
+```http
+HTTP/1.1 200 OK
+Content-Type: multipart/mixed; boundary=lp-boundary
+Livepeer-Balance: 17
+
+--lp-boundary
+Content-Type: application/octet-stream
+
+<binary chunk 1>
+--lp-boundary
+Content-Type: application/octet-stream
+
+<binary chunk 2>
+--lp-boundary
+Content-Type: application/json
+
+{"balance": 9}
+--lp-boundary--
+```
+
+In this example, the binary payload is streamed in separate `application/octet-stream` parts. The final JSON part carries the settled balance.

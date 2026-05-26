@@ -46,7 +46,9 @@ type mockJobOrchestrator struct {
 	unregisterExternalCapability    func(string) error
 	verifySignature                 func(ethcommon.Address, string, []byte) bool
 	checkExternalCapabilityCapacity func(string) int64
+	reserveExternalCapability       func(string) (*core.ExternalCapability, error)
 	reserveCapacity                 func(string) error
+	getExternalCapability           func(string) (*core.ExternalCapability, bool)
 	getUrlForCapability             func(string) string
 	balance                         func(ethcommon.Address, core.ManifestID) *big.Rat
 	processPayment                  func(context.Context, net.Payment, core.ManifestID) error
@@ -159,6 +161,21 @@ func (r *mockJobOrchestrator) CheckExternalCapabilityCapacity(extCap string) int
 		return r.checkExternalCapabilityCapacity(extCap)
 	}
 }
+func (r *mockJobOrchestrator) ReserveExternalCapability(extCap string) (*core.ExternalCapability, error) {
+	if r.reserveExternalCapability != nil {
+		return r.reserveExternalCapability(extCap)
+	}
+	if r.reserveCapacity != nil {
+		if err := r.reserveCapacity(extCap); err != nil {
+			return nil, err
+		}
+	}
+	cap := &core.ExternalCapability{Name: extCap, Key: extCap}
+	if r.getUrlForCapability != nil {
+		cap.Url = r.getUrlForCapability(extCap)
+	}
+	return cap, nil
+}
 func (r *mockJobOrchestrator) ReserveExternalCapabilityCapacity(extCap string) error {
 	if r.reserveCapacity == nil {
 		return nil
@@ -168,6 +185,16 @@ func (r *mockJobOrchestrator) ReserveExternalCapabilityCapacity(extCap string) e
 }
 func (r *mockJobOrchestrator) FreeExternalCapabilityCapacity(extCap string) error {
 	return r.freeCapacity(extCap)
+}
+func (r *mockJobOrchestrator) GetExternalCapability(extCapKey string) (*core.ExternalCapability, bool) {
+	if r.getExternalCapability != nil {
+		return r.getExternalCapability(extCapKey)
+	}
+	if r.externalCapabilities != nil {
+		cap, ok := r.externalCapabilities[extCapKey]
+		return cap, ok
+	}
+	return nil, false
 }
 func (r *mockJobOrchestrator) JobPriceInfo(sender ethcommon.Address, jobCapability string) (*net.PriceInfo, error) {
 	return r.jobPriceInfo(sender, jobCapability)
@@ -312,6 +339,48 @@ func TestUnregisterCapability(t *testing.T) {
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 		_, exists := mockOrch.externalCapabilities[capName]
 		assert.False(t, exists, "Capability should be removed")
+	})
+
+	t.Run("UnregisterSingleRunnerLeavesSiblingRegistration", func(t *testing.T) {
+		mockOrch.externalCapabilities = map[string]*core.ExternalCapability{
+			"runner-a": {Key: "runner-a", Name: capName, Url: "http://10.0.0.1:9000", Order: 20},
+			"runner-b": {Key: "runner-b", Name: capName, Url: "http://10.0.0.2:9000", Order: 10},
+		}
+
+		req := httptest.NewRequest(http.MethodPost, "/capability/unregister",
+			bytes.NewBufferString("runner-b"))
+		req.Header.Set("Authorization", secret)
+
+		recorder := httptest.NewRecorder()
+		handler := bso.UnregisterCapability()
+		handler.ServeHTTP(recorder, req)
+
+		assert.Equal(t, http.StatusOK, recorder.Result().StatusCode)
+		_, runnerBExists := mockOrch.externalCapabilities["runner-b"]
+		_, runnerAExists := mockOrch.externalCapabilities["runner-a"]
+		assert.False(t, runnerBExists, "selected runner should be removed")
+		assert.True(t, runnerAExists, "sibling runner registration should remain")
+	})
+
+	t.Run("UnregisterSingleRunnerByJSONIDLeavesSiblingRegistration", func(t *testing.T) {
+		mockOrch.externalCapabilities = map[string]*core.ExternalCapability{
+			"runner-a": {Key: "runner-a", Name: capName, Url: "http://10.0.0.1:9000", Order: 20},
+			"runner-b": {Key: "runner-b", Name: capName, Url: "http://10.0.0.2:9000", Order: 10},
+		}
+
+		req := httptest.NewRequest(http.MethodPost, "/capability/unregister",
+			bytes.NewBufferString(`{"id":"runner-b"}`))
+		req.Header.Set("Authorization", secret)
+
+		recorder := httptest.NewRecorder()
+		handler := bso.UnregisterCapability()
+		handler.ServeHTTP(recorder, req)
+
+		assert.Equal(t, http.StatusOK, recorder.Result().StatusCode)
+		_, runnerBExists := mockOrch.externalCapabilities["runner-b"]
+		_, runnerAExists := mockOrch.externalCapabilities["runner-a"]
+		assert.False(t, runnerBExists, "selected runner should be removed")
+		assert.True(t, runnerAExists, "sibling runner registration should remain")
 	})
 
 	t.Run("WrongMethod", func(t *testing.T) {
@@ -867,6 +936,80 @@ func TestProcessJob_WorkerAuthFailed(t *testing.T) {
 	workerServer.CloseClientConnections()
 }
 
+func TestProcessJob_ForwardsHTTPStreamingResponse(t *testing.T) {
+	workerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		w.Header().Set("X-Metadata", `{"source":"worker"}`)
+
+		flusher, ok := w.(http.Flusher)
+		assert.True(t, ok)
+
+		_, err := w.Write([]byte("{\"chunk\":1}\n"))
+		assert.NoError(t, err)
+		flusher.Flush()
+
+		_, err = w.Write([]byte("{\"chunk\":2}\n"))
+		assert.NoError(t, err)
+	}))
+	defer workerServer.Close()
+
+	mockOrch := newMockJobOrchestrator()
+	mockOrch.verifySignature = func(addr ethcommon.Address, msg string, sig []byte) bool {
+		return true
+	}
+	mockOrch.reserveCapacity = func(string) error {
+		return nil
+	}
+	mockOrch.getUrlForCapability = func(string) string {
+		return workerServer.URL
+	}
+	mockOrch.jobPriceInfo = func(addr ethcommon.Address, cap string) (*net.PriceInfo, error) {
+		return &net.PriceInfo{PricePerUnit: 0, PixelsPerUnit: 1}, nil
+	}
+	mockOrch.balance = func(addr ethcommon.Address, manifestID core.ManifestID) *big.Rat {
+		return big.NewRat(7, 1)
+	}
+	mockOrch.freeCapacity = func(string) error {
+		return nil
+	}
+
+	bso := &BYOCOrchestratorServer{
+		node: mockOrch.node,
+		orch: mockOrch,
+	}
+
+	jobParams := JobParameters{}
+	jobReq := &JobRequest{
+		ID:         "test-job",
+		Capability: "test-capability",
+		Parameters: marshalToString(t, jobParams),
+		Timeout:    1,
+		Request:    "{}",
+	}
+	gatewayJob := &gatewayJob{Job: &orchJob{Req: jobReq, Params: &jobParams}, node: mockOrch.node}
+	mockOrch.node.OrchestratorPool = newStubOrchestratorPool(mockOrch.node, []string{workerServer.URL})
+	assert.NoError(t, gatewayJob.sign())
+	mockOrch.node.OrchestratorPool = nil
+
+	req := httptest.NewRequest(http.MethodPost, "/process/request/test-capability", bytes.NewReader([]byte(`{"input":"hello"}`)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(jobRequestHdr, gatewayJob.SignedJobReq)
+
+	w := httptest.NewRecorder()
+	bso.ProcessJob().ServeHTTP(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, "application/x-ndjson", resp.Header.Get("Content-Type"))
+	assert.Equal(t, `{"source":"worker"}`, resp.Header.Get("X-Metadata"))
+	assert.Equal(t, "7", resp.Header.Get(jobPaymentBalanceHdr))
+	assert.Equal(t, "{\"chunk\":1}\n{\"chunk\":2}\n{\"balance\": 7}\n", string(body))
+}
+
 func TestProcessPayment(t *testing.T) {
 
 	ctx := context.Background()
@@ -910,7 +1053,7 @@ func TestProcessPayment(t *testing.T) {
 			}
 
 			before := orch.Balance(sender, core.ManifestID(tc.capability)).FloatString(0)
-			bal, err := bso.processPayment(ctx, sender, tc.capability, testPmtHdr)
+			bal, err := bso.processPayment(ctx, sender, tc.capability, "", testPmtHdr)
 			after := orch.Balance(sender, core.ManifestID(tc.capability)).FloatString(0)
 			t.Logf("Balance before: %s, after: %s", before, after)
 			assert.NoError(t, err)

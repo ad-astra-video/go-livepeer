@@ -326,14 +326,35 @@ func (bso *BYOCOrchestratorServer) processJob(ctx context.Context, w http.Respon
 		return
 	}
 
-	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
+	contentType := resp.Header.Get("Content-Type")
+	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("X-Metadata", resp.Header.Get("X-Metadata"))
 
 	//release capacity for another request
 	// if requester closes the connection need to release capacity
 	defer bso.orch.FreeExternalCapabilityCapacity(orchJob.RunnerKey)
 
-	if !strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
+	if !isSSEContentType(contentType) {
+		if isHTTPStreamingResponse(resp) {
+			bso.addPaymentBalanceHeader(w, orchJob.Sender, orchJob.Req.Capability)
+			w.WriteHeader(resp.StatusCode)
+
+			err = proxyHTTPStreamResponse(w, resp)
+
+			bso.chargeForCompute(start, orchJob.JobPrice, orchJob.Sender, orchJob.Req.Capability)
+			finalBalance := bso.getPaymentBalance(orchJob.Sender, orchJob.Req.Capability).FloatString(0)
+			if err == nil {
+				err = writeFinalBalanceChunk(w, contentType, finalBalance)
+			}
+			if err != nil {
+				clog.Errorf(ctx, "Unable to stream response err=%v", err)
+				return
+			}
+
+			clog.V(common.SHORT).Infof(ctx, "Job processed successfully took=%v balance=%v", time.Since(start), finalBalance)
+			return
+		}
+
 		//non streaming response
 
 		defer resp.Body.Close()
@@ -361,6 +382,7 @@ func (bso *BYOCOrchestratorServer) processJob(ctx context.Context, w http.Respon
 		bso.chargeForCompute(start, orchJob.JobPrice, orchJob.Sender, orchJob.Req.Capability)
 		w.Header().Set(jobPaymentBalanceHdr, bso.getPaymentBalance(orchJob.Sender, orchJob.Req.Capability).FloatString(0))
 		clog.V(common.SHORT).Infof(ctx, "Job processed successfully took=%v balance=%v", time.Since(start), bso.getPaymentBalance(orchJob.Sender, orchJob.Req.Capability).FloatString(0))
+		w.WriteHeader(resp.StatusCode)
 		w.Write(data)
 		//request completed and returned a response
 
@@ -558,6 +580,7 @@ func (bso *BYOCOrchestratorServer) chargeForCompute(start time.Time, price *net.
 func (bso *BYOCOrchestratorServer) addPaymentBalanceHeader(w http.ResponseWriter, sender ethcommon.Address, jobId string) {
 	//check balance and return remaning balance in header of response
 	senderBalance := bso.getPaymentBalance(sender, jobId)
+	w.Header().Set(jobPaymentBalanceHdr, senderBalance.FloatString(0))
 	w.Header().Set("Livepeer-Payment-Balance", senderBalance.FloatString(0))
 }
 

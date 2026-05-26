@@ -261,6 +261,76 @@ func TestCreatePayment(t *testing.T) {
 	})
 }
 
+func TestSubmitJob_ForwardsHTTPStreamingResponse(t *testing.T) {
+	var orchURL string
+	orchServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/process/token":
+			token := createMockJobToken(orchURL)
+			token.Price = &net.PriceInfo{PricePerUnit: 0, PixelsPerUnit: 1}
+			w.Header().Set("Content-Type", "application/json")
+			assert.NoError(t, json.NewEncoder(w).Encode(token))
+		case "/process/request/test-capability":
+			w.Header().Set("Content-Type", "application/x-ndjson")
+			w.Header().Set("X-Metadata", `{"source":"orch"}`)
+			w.Header().Set(jobPaymentBalanceHdr, "17")
+
+			flusher, ok := w.(http.Flusher)
+			assert.True(t, ok)
+
+			_, err := w.Write([]byte("{\"chunk\":1}\n"))
+			assert.NoError(t, err)
+			flusher.Flush()
+
+			_, err = w.Write([]byte("{\"chunk\":2}\n"))
+			assert.NoError(t, err)
+
+			_, err = w.Write([]byte("{\"balance\": 9}\n"))
+			assert.NoError(t, err)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer orchServer.Close()
+	orchURL = orchServer.URL
+
+	node := mockJobLivepeerNode()
+	node.Balances = core.NewAddressBalances(1 * time.Second)
+	defer node.Balances.StopCleanup()
+	node.OrchestratorPool = newStubOrchestratorPool(node, []string{orchServer.URL})
+
+	bsg := &BYOCGatewayServer{node: node}
+
+	jobReq := JobRequest{
+		ID:         "job-1",
+		Request:    "{}",
+		Parameters: "{}",
+		Capability: "test-capability",
+		Timeout:    1,
+	}
+	jobReqJSON, err := json.Marshal(jobReq)
+	assert.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/process/request/test-capability", strings.NewReader(`{"input":"hello"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(jobRequestHdr, base64.StdEncoding.EncodeToString(jobReqJSON))
+
+	w := httptest.NewRecorder()
+	bsg.SubmitJob().ServeHTTP(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, "application/x-ndjson", resp.Header.Get("Content-Type"))
+	assert.Equal(t, `{"source":"orch"}`, resp.Header.Get("X-Metadata"))
+	assert.Equal(t, orchServer.URL, resp.Header.Get("X-Orchestrator-Url"))
+	assert.Equal(t, "17", resp.Header.Get(jobPaymentBalanceHdr))
+	assert.Equal(t, "{\"chunk\":1}\n{\"chunk\":2}\n{\"balance\": 9}\n", string(body))
+}
+
 func createTestPayment(capability string) (string, error) {
 	ctx := context.TODO()
 	bsg := &BYOCGatewayServer{

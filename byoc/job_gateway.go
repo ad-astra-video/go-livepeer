@@ -149,13 +149,32 @@ func (bsg *BYOCGatewayServer) submitJob(ctx context.Context, w http.ResponseWrit
 		// for streaming responses: the balance is the balance before deducting cost to finish the request
 		//                          the ending balance is sent as last line before [DONE] in the SSE stream
 		// for non-streaming: the balance is the balance after deducting the cost of the request
+		contentType := resp.Header.Get("Content-Type")
 		orchBalance := resp.Header.Get(jobPaymentBalanceHdr)
-		w.Header().Set(jobPaymentBalanceHdr, orchBalance)
 		w.Header().Set("X-Metadata", resp.Header.Get("X-Metadata"))
 		w.Header().Set("X-Orchestrator-Url", orchToken.ServiceAddr)
 
-		if !strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
+		if !isSSEContentType(contentType) {
+			if isHTTPStreamingResponse(resp) {
+				w.Header().Set(jobPaymentBalanceHdr, orchBalance)
+				w.Header().Set("Content-Type", contentType)
+				w.WriteHeader(resp.StatusCode)
+
+				err = proxyHTTPStreamResponse(w, resp)
+
+				gatewayBalance := updateGatewayBalance(bsg.node, orchToken, gatewayJob.Job.Req.Capability, time.Since(start))
+				if err != nil {
+					clog.Errorf(ctx, "Unable to stream response err=%v", err)
+					return
+				}
+
+				clog.V(common.SHORT).Infof(ctx, "Job processed successfully took=%v balance=%v balance_from_orch=%v", time.Since(start), gatewayBalance.FloatString(0), orchBalance)
+				return
+			}
+
 			//non streaming response
+			w.Header().Set(jobPaymentBalanceHdr, orchBalance)
+			w.Header().Set("Content-Type", contentType)
 			data, err := io.ReadAll(resp.Body)
 			resp.Body.Close()
 			if err != nil {
@@ -166,12 +185,14 @@ func (bsg *BYOCGatewayServer) submitJob(ctx context.Context, w http.ResponseWrit
 
 			gatewayBalance := updateGatewayBalance(bsg.node, orchToken, gatewayJob.Job.Req.Capability, time.Since(start))
 			clog.V(common.SHORT).Infof(ctx, "Job processed successfully took=%v balance=%v balance_from_orch=%v", time.Since(start), gatewayBalance.FloatString(0), orchBalance)
+			w.WriteHeader(resp.StatusCode)
 			w.Write(data)
 			return
 		} else {
 			// Handle streaming response (SSE)
 			clog.Infof(ctx, "received streaming response")
 
+			w.Header().Set(jobPaymentBalanceHdr, orchBalance)
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.Header().Set("Cache-Control", "no-cache")
 			w.Header().Set("Connection", "keep-alive")
