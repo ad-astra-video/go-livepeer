@@ -337,6 +337,34 @@ func (extCaps *ExternalCapabilities) ReserveCapability(name string) (*ExternalCa
 	return nil, fmt.Errorf("external capability not found")
 }
 
+func (extCaps *ExternalCapabilities) ReserveCapabilityByKey(key string) (*ExternalCapability, error) {
+	if extCaps == nil {
+		return nil, fmt.Errorf("external capability not found")
+	}
+
+	extCaps.capm.Lock()
+	cap, ok := extCaps.Capabilities[key]
+	if !ok {
+		extCaps.capm.Unlock()
+		return nil, fmt.Errorf("external capability not found")
+	}
+
+	cap.Mu.Lock()
+	if cap.Load >= cap.Capacity {
+		cap.Mu.Unlock()
+		extCaps.capm.Unlock()
+		return nil, fmt.Errorf("external capability not found")
+	}
+	cap.Load++
+	currentLoad := cap.Load
+	capabilityName := cap.Name
+	runnerKey := cap.Key
+	cap.Mu.Unlock()
+	extCaps.capm.Unlock()
+	monitor.AIRunnerAllocationsInFlight(capabilityName, runnerKey, int64(currentLoad))
+	return cap, nil
+}
+
 func (extCaps *ExternalCapabilities) FreeCapability(key string) error {
 	if extCaps == nil {
 		return fmt.Errorf("external capability not found")
@@ -396,6 +424,28 @@ func (extCaps *ExternalCapabilities) AvailableCapacity(name string) int64 {
 	}
 
 	return total
+}
+
+func (extCaps *ExternalCapabilities) AvailableRunnerIDs(name string) []string {
+	if extCaps == nil {
+		return nil
+	}
+
+	extCaps.capm.Lock()
+	defer extCaps.capm.Unlock()
+
+	var runnerIDs []string
+	for _, cap := range extCaps.capabilitiesByName(name) {
+		cap.Mu.RLock()
+		remaining := cap.Capacity - cap.Load
+		runnerKey := cap.Key
+		cap.Mu.RUnlock()
+		if remaining > 0 {
+			runnerIDs = append(runnerIDs, runnerKey)
+		}
+	}
+
+	return runnerIDs
 }
 
 // caller should hold the extCaps.capm.Lock()

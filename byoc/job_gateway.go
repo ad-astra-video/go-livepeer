@@ -110,6 +110,12 @@ func (bsg *BYOCGatewayServer) submitJob(ctx context.Context, w http.ResponseWrit
 	for _, orchToken := range gatewayJob.Orchs {
 		workerResourceRoute := r.URL.Path
 
+		if err := gatewayJob.setSelectedRunner(orchToken.runnerId); err != nil {
+			clog.Errorf(ctx, "Error setting selected runner err=%v", err)
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
 		err := gatewayJob.sign()
 		if err != nil {
 			clog.Errorf(ctx, "Error signing job, exiting stream processing request: %v", err)
@@ -277,7 +283,7 @@ func (bsg *BYOCGatewayServer) sendJobToOrch(ctx context.Context, r *http.Request
 	}
 
 	req.Header.Add(jobRequestHdr, signedReqHdr)
-	if orchToken.Price.PricePerUnit > 0 {
+	if runnerPrice := orchToken.SelectedRunnerPriceInfo(); runnerPrice != nil && runnerPrice.PricePerUnit > 0 {
 		paymentHdr, err := bsg.createPayment(ctx, jobReq, &orchToken)
 		if err != nil {
 			clog.Errorf(ctx, "Unable to create payment err=%v", err)
@@ -420,6 +426,48 @@ func parseDiscoveryRequest(jobCreds string) (*JobRequest, JobParameters, error) 
 	return jobData, jobParams, nil
 }
 
+func selectRunnerForToken(token *JobToken, params JobParameters) bool {
+	if len(token.RunnerIDs) == 0 {
+		token.runnerId = ""
+		return len(params.Runners.Include) == 0
+	}
+
+	availableRunnerIDs := token.RunnerIDs[:0]
+	for _, runnerID := range token.RunnerIDs {
+		if len(params.Runners.Include) > 0 && !slices.Contains(params.Runners.Include, runnerID) {
+			continue
+		}
+		if slices.Contains(params.Runners.Exclude, runnerID) {
+			continue
+		}
+		availableRunnerIDs = append(availableRunnerIDs, runnerID)
+	}
+	token.RunnerIDs = availableRunnerIDs
+	filteredRunnerPrices := token.RunnerPrices[:0]
+	for _, runnerPrice := range token.RunnerPrices {
+		if slices.Contains(token.RunnerIDs, runnerPrice.RunnerId) {
+			filteredRunnerPrices = append(filteredRunnerPrices, runnerPrice)
+		}
+	}
+	token.RunnerPrices = filteredRunnerPrices
+	if len(token.RunnerIDs) == 0 {
+		return false
+	}
+	token.runnerId = token.RunnerIDs[0]
+	bestPrice := token.RunnerPriceInfo(token.runnerId)
+	for _, runnerID := range token.RunnerIDs[1:] {
+		candidatePrice := token.RunnerPriceInfo(runnerID)
+		if candidatePrice == nil {
+			continue
+		}
+		if bestPrice == nil || big.NewRat(candidatePrice.PricePerUnit, candidatePrice.PixelsPerUnit).Cmp(big.NewRat(bestPrice.PricePerUnit, bestPrice.PixelsPerUnit)) < 0 {
+			token.runnerId = runnerID
+			bestPrice = candidatePrice
+		}
+	}
+	return true
+}
+
 func getJobOrchestrators(ctx context.Context, node *core.LivepeerNode, capability string, params JobParameters, timeout time.Duration, respTimeout time.Duration, includeZeroCapacity bool) ([]JobToken, error) {
 	reqSender, err := getJobSender(ctx, node)
 	if err != nil {
@@ -503,6 +551,10 @@ func getJobOrchestrators(ctx context.Context, node *core.LivepeerNode, capabilit
 	for nbResp < numAvailableOrchs && len(jobTokens) < numAvailableOrchs {
 		select {
 		case token := <-tokenCh:
+			if !selectRunnerForToken(&token, params) {
+				nbResp++
+				continue
+			}
 			if includeZeroCapacity || token.AvailableCapacity > 0 {
 				jobTokens = append(jobTokens, token)
 			}
@@ -599,4 +651,18 @@ func getToken(ctx context.Context, respTimeout time.Duration, orchUrl, capabilit
 		return nil, err
 	}
 	return nil, fmt.Errorf("failed to get token from Orchestrator after %d attempts", attempt)
+}
+
+func (g *gatewayJob) setSelectedRunner(runnerID string) error {
+	if g == nil || g.Job == nil || g.Job.Req == nil || g.Job.Params == nil {
+		return fmt.Errorf("invalid gateway job")
+	}
+
+	g.Job.Params.RunnerId = runnerID
+	paramsJSON, err := json.Marshal(g.Job.Params)
+	if err != nil {
+		return fmt.Errorf("unable to encode job parameters err=%v", err)
+	}
+	g.Job.Req.Parameters = string(paramsJSON)
+	return nil
 }

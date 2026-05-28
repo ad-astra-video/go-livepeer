@@ -206,13 +206,13 @@ func TestExternalCapabilities_RemoveCapability(t *testing.T) {
 			"currency": "wei"
 		}`
 
-		_, err := extCaps.RegisterCapability(capJSON)
+		cap, err := extCaps.RegisterCapability(capJSON)
 		require.NoError(t, err)
-		assert.Contains(t, extCaps.Capabilities, "localhost:8000")
+		assert.Contains(t, extCaps.Capabilities, cap.Key)
 
 		// Now remove it
 		extCaps.RemoveCapability("to-remove")
-		assert.NotContains(t, extCaps.Capabilities, "localhost:8000")
+		assert.NotContains(t, extCaps.Capabilities, cap.Key)
 	})
 
 	t.Run("Remove non-existent capability", func(t *testing.T) {
@@ -280,6 +280,48 @@ func TestExternalCapabilities_MultipleRunnersLifecycle(t *testing.T) {
 
 	extCaps.RemoveCapability("multi-runner-cap")
 	assert.Empty(t, extCaps.GetCapabilitiesByName("multi-runner-cap"))
+}
+
+func TestExternalCapabilities_AvailableRunnerIDsAndReserveByKey(t *testing.T) {
+	extCaps := NewExternalCapabilities()
+
+	firstRunner := `{
+		"name": "runner-filter-cap",
+		"id": "runner-a",
+		"url": "http://10.0.0.1:9000",
+		"order": 20,
+		"capacity": 1,
+		"price_per_unit": 100,
+		"price_scaling": 1,
+		"currency": "wei"
+	}`
+	secondRunner := `{
+		"name": "runner-filter-cap",
+		"id": "runner-b",
+		"url": "http://10.0.0.2:9000",
+		"order": 10,
+		"capacity": 1,
+		"price_per_unit": 100,
+		"price_scaling": 1,
+		"currency": "wei"
+	}`
+
+	_, err := extCaps.RegisterCapability(firstRunner)
+	require.NoError(t, err)
+	_, err = extCaps.RegisterCapability(secondRunner)
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"runner-b", "runner-a"}, extCaps.AvailableRunnerIDs("runner-filter-cap"))
+
+	reserved, err := extCaps.ReserveCapabilityByKey("runner-a")
+	require.NoError(t, err)
+	assert.Equal(t, "runner-a", reserved.Key)
+	assert.Equal(t, []string{"runner-b"}, extCaps.AvailableRunnerIDs("runner-filter-cap"))
+
+	_, err = extCaps.ReserveCapabilityByKey("missing-runner")
+	assert.Error(t, err)
+	_, err = extCaps.ReserveCapabilityByKey("runner-a")
+	assert.Error(t, err)
 }
 
 func TestExternalCapability_GetPrice(t *testing.T) {

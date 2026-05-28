@@ -1801,6 +1801,62 @@ func TestBYOCExternalCapsPriceEdgeCases(t *testing.T) {
 	}
 }
 
+func TestBYOCExternalCapsMultipleRunnersSyncCapabilityPrice(t *testing.T) {
+	n, _ := NewLivepeerNode(nil, "", nil)
+	n.SetBasePrice("default", NewFixedPrice(big.NewRat(1, 1)))
+	n.Recipient = new(pm.MockRecipient)
+	orch := NewOrchestrator(n, nil)
+
+	firstRunner := `{
+		"name": "multi-runner-cap",
+		"id": "runner-a",
+		"url": "http://10.0.0.1:9000",
+		"order": 20,
+		"capacity": 1,
+		"price_per_unit": 100,
+		"price_scaling": 1,
+		"currency": "wei"
+	}`
+	secondRunner := `{
+		"name": "multi-runner-cap",
+		"id": "runner-b",
+		"url": "http://10.0.0.2:9000",
+		"order": 10,
+		"capacity": 1,
+		"price_per_unit": 250,
+		"price_scaling": 1,
+		"currency": "wei"
+	}`
+
+	_, err := orch.RegisterExternalCapability(firstRunner)
+	require.NoError(t, err)
+	assert.Zero(t, big.NewRat(100, 1).Cmp(n.GetPriceForJob("default", "multi-runner-cap")))
+
+	_, err = orch.RegisterExternalCapability(secondRunner)
+	require.NoError(t, err)
+	assert.Zero(t, big.NewRat(250, 1).Cmp(n.GetPriceForJob("default", "multi-runner-cap")))
+
+	prices, err := orch.GetCapabilitiesPrices(ethcommon.HexToAddress("0x1000000000000000000000000000000000000000"))
+	require.NoError(t, err)
+
+	var byocPrices []*net.PriceInfo
+	for _, p := range prices {
+		if p.Capability == uint32(Capability_BYOC) && p.Constraint == "multi-runner-cap" {
+			byocPrices = append(byocPrices, p)
+		}
+	}
+	require.Len(t, byocPrices, 1)
+	assert.Equal(t, int64(250), byocPrices[0].PricePerUnit)
+
+	err = orch.RemoveExternalCapability("runner-b")
+	require.NoError(t, err)
+	assert.Zero(t, big.NewRat(100, 1).Cmp(n.GetPriceForJob("default", "multi-runner-cap")))
+
+	err = orch.RemoveExternalCapability("runner-a")
+	require.NoError(t, err)
+	assert.Zero(t, n.GetPriceForJob("default", "multi-runner-cap").Sign())
+}
+
 func TestDebitFees(t *testing.T) {
 	n, _ := NewLivepeerNode(nil, "", nil)
 	n.Balances = NewAddressBalances(5 * time.Second)

@@ -1134,13 +1134,41 @@ func (orch *orchestrator) RegisterExternalCapability(extCapabilitySettings strin
 		return nil, err
 	}
 
-	orch.node.SetPriceForExternalCapability("default", cap.Name, cap.GetPrice())
+	orch.syncExternalCapabilityPrice(cap.Name)
 	return cap, nil
 }
 
 func (orch *orchestrator) RemoveExternalCapability(extCapability string) error {
+	if orch.node == nil || orch.node.ExternalCapabilities == nil {
+		return nil
+	}
+
+	capabilityNames := map[string]struct{}{}
+	if cap, ok := orch.node.ExternalCapabilities.GetCapabilityByKey(extCapability); ok {
+		capabilityNames[cap.Name] = struct{}{}
+	} else if caps := orch.node.ExternalCapabilities.GetCapabilitiesByName(extCapability); len(caps) > 0 {
+		capabilityNames[extCapability] = struct{}{}
+	}
+
 	orch.node.ExternalCapabilities.RemoveCapability(extCapability)
+	for capabilityName := range capabilityNames {
+		orch.syncExternalCapabilityPrice(capabilityName)
+	}
 	return nil
+}
+
+func (orch *orchestrator) syncExternalCapabilityPrice(capabilityName string) {
+	if orch.node == nil || orch.node.ExternalCapabilities == nil || capabilityName == "" {
+		return
+	}
+
+	cap, ok := orch.node.ExternalCapabilities.GetCapabilityByName(capabilityName)
+	if !ok {
+		orch.node.ClearPriceForExternalCapability("default", capabilityName)
+		return
+	}
+
+	orch.node.SetPriceForExternalCapability("default", capabilityName, cap.GetPrice())
 }
 
 func (orch *orchestrator) GetExternalCapability(extCapabilityKey string) (*ExternalCapability, bool) {
@@ -1149,6 +1177,14 @@ func (orch *orchestrator) GetExternalCapability(extCapabilityKey string) (*Exter
 
 func (orch *orchestrator) ReserveExternalCapability(extCapability string) (*ExternalCapability, error) {
 	return orch.node.ExternalCapabilities.ReserveCapability(extCapability)
+}
+
+func (orch *orchestrator) ReserveExternalCapabilityByKey(extCapabilityKey string) (*ExternalCapability, error) {
+	return orch.node.ExternalCapabilities.ReserveCapabilityByKey(extCapabilityKey)
+}
+
+func (orch *orchestrator) AvailableExternalRunnerIDs(extCapability string) []string {
+	return orch.node.ExternalCapabilities.AvailableRunnerIDs(extCapability)
 }
 
 func (orch *orchestrator) GetUrlForCapability(extCapability string) string {

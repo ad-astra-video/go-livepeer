@@ -52,7 +52,9 @@ type Orchestrator interface {
 	TranscoderSecret() string
 	VerifySig(addr ethcommon.Address, msg string, sig []byte) bool
 	ReserveExternalCapability(capability string) (*core.ExternalCapability, error)
+	ReserveExternalCapabilityByKey(capabilityKey string) (*core.ExternalCapability, error)
 	GetExternalCapability(capabilityKey string) (*core.ExternalCapability, bool)
+	AvailableExternalRunnerIDs(capability string) []string
 	ReserveExternalCapabilityCapacity(capability string) error
 	GetUrlForCapability(capability string) string
 	JobPriceInfo(sender ethcommon.Address, capability string) (*net.PriceInfo, error)
@@ -86,7 +88,9 @@ type BYOCStreamPipeline struct {
 	Params       []byte
 	Pipeline     string
 	ControlPub   *trickle.TricklePublisher
+	JSONPub      *trickle.TricklePublisher
 	StopControl  func()
+	StopJSON     func()
 	ReportUpdate func([]byte)
 	OutCond      *sync.Cond
 	OutWriter    *media.RingBuffer
@@ -122,6 +126,8 @@ type JobRequestDetails struct {
 type JobParameters struct {
 	// Gateway
 	Orchestrators JobOrchestratorsFilter `json:"orchestrators,omitempty"` // list of orchestrators to use for the job
+	Runners       JobRunnersFilter       `json:"runners,omitempty"`
+	RunnerId      string                 `json:"runner_id,omitempty"`
 
 	// Orchestrator
 	EnableVideoIngress bool `json:"enable_video_ingress,omitempty"`
@@ -134,16 +140,52 @@ type JobOrchestratorsFilter struct {
 	Include []string `json:"include,omitempty"`
 }
 
+type JobRunnersFilter struct {
+	Exclude []string `json:"exclude,omitempty"`
+	Include []string `json:"include,omitempty"`
+}
+
 type JobToken struct {
+	// Orchestrator-provided fields sent to the Gateway.
 	SenderAddress     *JobSender        `json:"sender_address,omitempty"`
 	TicketParams      *net.TicketParams `json:"ticket_params,omitempty"`
 	Balance           int64             `json:"balance,omitempty"`
-	Price             *net.PriceInfo    `json:"price,omitempty"`
 	ServiceAddr       string            `json:"service_addr,omitempty"`
 	AvailableCapacity int64             `json:"available_capacity,omitempty"`
 	DiscoveryTimeMs   int64             `json:"discovery_time_ms,omitempty"`
+	RunnerIDs         []string          `json:"runner_ids,omitempty"`
+	RunnerPrices      []RunnerPrice     `json:"runner_prices,omitempty"`
 
-	LastNonce uint32
+	// Gateway-only fields.
+	// runnerId tracks the selected runner from RunnerIDs.
+	runnerId  string `json:"-"`
+	lastNonce uint32
+}
+
+type RunnerPrice struct {
+	RunnerId string         `json:"runner_id"`
+	Price    *net.PriceInfo `json:"price,omitempty"`
+}
+
+func (jt JobToken) RunnerPriceInfo(runnerID string) *net.PriceInfo {
+	for _, runnerPrice := range jt.RunnerPrices {
+		if runnerPrice.RunnerId == runnerID {
+			return runnerPrice.Price
+		}
+	}
+	return nil
+}
+
+func (jt JobToken) SelectedRunnerPriceInfo() *net.PriceInfo {
+	if jt.runnerId != "" {
+		if price := jt.RunnerPriceInfo(jt.runnerId); price != nil {
+			return price
+		}
+	}
+	if len(jt.RunnerIDs) > 0 {
+		return jt.RunnerPriceInfo(jt.RunnerIDs[0])
+	}
+	return nil
 }
 
 func (jt JobToken) Address() string {
@@ -190,6 +232,7 @@ type StartRequest struct {
 
 type StreamUrls struct {
 	StreamId      string `json:"stream_id"`
+	RunnerId      string `json:"runner_id,omitempty"`
 	WhipUrl       string `json:"whip_url"`
 	WhepUrl       string `json:"whep_url"`
 	RtmpUrl       string `json:"rtmp_url"`
@@ -204,6 +247,7 @@ type orchTrickleUrls struct {
 	orchPublishUrl   string
 	orchSubscribeUrl string
 	orchControlUrl   string
+	orchJSONUrl      string
 	orchEventsUrl    string
 	orchDataUrl      string
 }

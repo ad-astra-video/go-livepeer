@@ -25,6 +25,7 @@ import (
 	"github.com/livepeer/go-livepeer/net"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
 type mockJobOrchestrator struct {
@@ -47,8 +48,10 @@ type mockJobOrchestrator struct {
 	verifySignature                 func(ethcommon.Address, string, []byte) bool
 	checkExternalCapabilityCapacity func(string) int64
 	reserveExternalCapability       func(string) (*core.ExternalCapability, error)
+	reserveExternalCapabilityByKey  func(string) (*core.ExternalCapability, error)
 	reserveCapacity                 func(string) error
 	getExternalCapability           func(string) (*core.ExternalCapability, bool)
+	availableExternalRunnerIDs      func(string) []string
 	getUrlForCapability             func(string) string
 	balance                         func(ethcommon.Address, core.ManifestID) *big.Rat
 	processPayment                  func(context.Context, net.Payment, core.ManifestID) error
@@ -176,6 +179,15 @@ func (r *mockJobOrchestrator) ReserveExternalCapability(extCap string) (*core.Ex
 	}
 	return cap, nil
 }
+func (r *mockJobOrchestrator) ReserveExternalCapabilityByKey(extCapKey string) (*core.ExternalCapability, error) {
+	if r.reserveExternalCapabilityByKey != nil {
+		return r.reserveExternalCapabilityByKey(extCapKey)
+	}
+	if cap, ok := r.GetExternalCapability(extCapKey); ok {
+		return cap, nil
+	}
+	return nil, errors.New("external capability not found")
+}
 func (r *mockJobOrchestrator) ReserveExternalCapabilityCapacity(extCap string) error {
 	if r.reserveCapacity == nil {
 		return nil
@@ -195,6 +207,12 @@ func (r *mockJobOrchestrator) GetExternalCapability(extCapKey string) (*core.Ext
 		return cap, ok
 	}
 	return nil, false
+}
+func (r *mockJobOrchestrator) AvailableExternalRunnerIDs(capability string) []string {
+	if r.availableExternalRunnerIDs != nil {
+		return r.availableExternalRunnerIDs(capability)
+	}
+	return []string{"runner-a", "runner-b"}
 }
 func (r *mockJobOrchestrator) JobPriceInfo(sender ethcommon.Address, jobCapability string) (*net.PriceInfo, error) {
 	return r.jobPriceInfo(sender, jobCapability)
@@ -802,6 +820,29 @@ func TestGetJobToken_Success(t *testing.T) {
 	mockJobOrch.jobPriceInfo = mockJobPriceInfo
 	mockJobOrch.ticketParams = mockTicketParams
 	mockJobOrch.balance = mockBalance
+	mockJobOrch.externalCapabilities = make(map[string]*core.ExternalCapability)
+	runnerA, err := mockJobOrch.node.ExternalCapabilities.RegisterCapability(`{
+		"name": "test-cap",
+		"id": "runner-a",
+		"url": "http://10.0.0.1:9000",
+		"capacity": 1,
+		"price_per_unit": 101,
+		"price_scaling": 1,
+		"currency": "wei"
+	}`)
+	require.NoError(t, err)
+	runnerB, err := mockJobOrch.node.ExternalCapabilities.RegisterCapability(`{
+		"name": "test-cap",
+		"id": "runner-b",
+		"url": "http://10.0.0.2:9000",
+		"capacity": 1,
+		"price_per_unit": 202,
+		"price_scaling": 1,
+		"currency": "wei"
+	}`)
+	require.NoError(t, err)
+	mockJobOrch.externalCapabilities[runnerA.Key] = runnerA
+	mockJobOrch.externalCapabilities[runnerB.Key] = runnerB
 
 	bso := &BYOCOrchestratorServer{
 		node: mockJobLivepeerNode(),
@@ -835,6 +876,13 @@ func TestGetJobToken_Success(t *testing.T) {
 
 	assert.NotNil(t, token.TicketParams)
 	assert.Equal(t, int64(1000), token.Balance)
+	assert.Equal(t, []string{"runner-a", "runner-b"}, token.RunnerIDs)
+	if assert.Len(t, token.RunnerPrices, 2) {
+		assert.Equal(t, "runner-a", token.RunnerPrices[0].RunnerId)
+		assert.Equal(t, int64(101), token.RunnerPrices[0].Price.PricePerUnit)
+		assert.Equal(t, "runner-b", token.RunnerPrices[1].RunnerId)
+		assert.Equal(t, int64(202), token.RunnerPrices[1].Price.PricePerUnit)
+	}
 }
 
 func TestProcessJob_MethodNotAllowed(t *testing.T) {
@@ -1010,6 +1058,69 @@ func TestProcessJob_ForwardsHTTPStreamingResponse(t *testing.T) {
 	assert.Equal(t, "{\"chunk\":1}\n{\"chunk\":2}\n{\"balance\": 7}\n", string(body))
 }
 
+func TestSetupOrchJob_UsesRequestedRunnerPrice(t *testing.T) {
+	mockOrch := newMockJobOrchestrator()
+	mockOrch.verifySignature = func(addr ethcommon.Address, msg string, sig []byte) bool {
+		return true
+	}
+	if mockOrch.node.ExternalCapabilities == nil {
+		mockOrch.node.ExternalCapabilities = core.NewExternalCapabilities()
+	}
+	registeredRunner, err := mockOrch.node.ExternalCapabilities.RegisterCapability(`{
+		"name": "test-capability",
+		"id": "runner-b",
+		"url": "http://runner",
+		"capacity": 1,
+		"price_per_unit": 25,
+		"price_scaling": 1,
+		"currency": "wei"
+	}`)
+	require.NoError(t, err)
+	jobPriceCalled := false
+	mockOrch.jobPriceInfo = func(addr ethcommon.Address, cap string) (*net.PriceInfo, error) {
+		jobPriceCalled = true
+		return &net.PriceInfo{PricePerUnit: 10, PixelsPerUnit: 1}, nil
+	}
+	mockOrch.reserveExternalCapabilityByKey = func(key string) (*core.ExternalCapability, error) {
+		return registeredRunner, nil
+	}
+	mockOrch.getExternalCapability = func(key string) (*core.ExternalCapability, bool) {
+		return registeredRunner, true
+	}
+	mockOrch.freeCapacity = func(string) error {
+		return nil
+	}
+	mockOrch.balance = func(addr ethcommon.Address, manifestID core.ManifestID) *big.Rat {
+		return big.NewRat(5000, 1)
+	}
+
+	bso := &BYOCOrchestratorServer{node: mockOrch.node, orch: mockOrch}
+
+	jobParams := JobParameters{RunnerId: "runner-b"}
+	jobReq := &JobRequest{
+		ID:         "test-job",
+		Capability: "test-capability",
+		Parameters: marshalToString(t, jobParams),
+		Timeout:    10,
+		Request:    "{}",
+	}
+	gatewayJob := &gatewayJob{Job: &orchJob{Req: jobReq, Params: &jobParams}, node: mockOrch.node}
+	mockOrch.node.OrchestratorPool = newStubOrchestratorPool(mockOrch.node, []string{"http://localhost:1234"})
+	assert.NoError(t, gatewayJob.sign())
+	mockOrch.node.OrchestratorPool = nil
+
+	req := httptest.NewRequest(http.MethodPost, "/process/request/test-capability", bytes.NewReader([]byte(`{"input":"hello"}`)))
+	req.Header.Set(jobRequestHdr, gatewayJob.SignedJobReq)
+
+	orchJob, err := bso.setupOrchJob(context.Background(), req, true)
+	assert.NoError(t, err)
+	assert.NotNil(t, orchJob)
+	assert.Equal(t, int64(25), orchJob.JobPrice.PricePerUnit)
+	assert.Equal(t, int64(1), orchJob.JobPrice.PixelsPerUnit)
+	assert.False(t, jobPriceCalled)
+	assert.Equal(t, "runner-b", orchJob.RunnerKey)
+}
+
 func TestProcessPayment(t *testing.T) {
 
 	ctx := context.Background()
@@ -1096,6 +1207,11 @@ func createMockJobToken(hostUrl string) *JobToken {
 	winProb10 := new(big.Int).Div(maxWinProb, big.NewInt(10))
 	return &JobToken{
 		ServiceAddr: hostUrl,
+		RunnerIDs:   []string{"runner-a", "runner-b"},
+		RunnerPrices: []RunnerPrice{
+			{RunnerId: "runner-a", Price: &net.PriceInfo{PricePerUnit: 100, PixelsPerUnit: 1}},
+			{RunnerId: "runner-b", Price: &net.PriceInfo{PricePerUnit: 202, PixelsPerUnit: 1}},
+		},
 		SenderAddress: &JobSender{
 			Addr: "0x1234567890abcdef1234567890abcdef123456",
 			Sig:  "0x456",
@@ -1104,10 +1220,6 @@ func createMockJobToken(hostUrl string) *JobToken {
 			Recipient: ethcommon.HexToAddress("0x1111111111111111111111111111111111111111").Bytes(),
 			FaceValue: big.NewInt(1000).Bytes(),
 			WinProb:   winProb10.Bytes(),
-		},
-		Price: &net.PriceInfo{
-			PricePerUnit:  100,
-			PixelsPerUnit: 1,
 		},
 		AvailableCapacity: 1,
 	}

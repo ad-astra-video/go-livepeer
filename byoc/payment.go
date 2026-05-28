@@ -79,6 +79,10 @@ func (bsg *BYOCGatewayServer) createPayment(ctx context.Context, jobReq *JobRequ
 	if orchToken.TicketParams == nil {
 		return "", errors.New("no ticket params available, cannot create payment")
 	}
+	orchPriceInfo := orchToken.SelectedRunnerPriceInfo()
+	if orchPriceInfo == nil {
+		return "", errors.New("no runner price available, cannot create payment")
+	}
 
 	var payment *net.Payment
 	createTickets := true
@@ -92,7 +96,7 @@ func (bsg *BYOCGatewayServer) createPayment(ctx context.Context, jobReq *JobRequ
 	//Orchestrator tracks balance paid and will not perform work if the balance it
 	//has is not sufficient
 	orchBal := big.NewRat(orchToken.Balance, 1)
-	price := big.NewRat(orchToken.Price.PricePerUnit, orchToken.Price.PixelsPerUnit)
+	price := big.NewRat(orchPriceInfo.PricePerUnit, orchPriceInfo.PixelsPerUnit)
 	cost := new(big.Rat).Mul(price, big.NewRat(int64(jobReq.Timeout), 1))
 	minBal := new(big.Rat).Mul(price, big.NewRat(120, 1)) //minimum 2 minute balance, Orchestrator requires 1 minute.  Use 2 to have a buffer.
 	balance, diffToOrch, minBalCovered, resetToZero := compareAndUpdateBalance(bsg, orchAddr, jobReq.Capability, orchBal, minBal)
@@ -107,7 +111,7 @@ func (bsg *BYOCGatewayServer) createPayment(ctx context.Context, jobReq *JobRequ
 		createTickets = false
 		payment = &net.Payment{
 			Sender:        sender.Bytes(),
-			ExpectedPrice: orchToken.Price,
+			ExpectedPrice: orchPriceInfo,
 		}
 	}
 	clog.V(common.DEBUG).Infof(ctx, "current balance for sender=%v capability=%v is %v, cost=%v price=%v", sender.Hex(), jobReq.Capability, balance.FloatString(3), cost.FloatString(3), price.FloatString(3))
@@ -138,7 +142,7 @@ func (bsg *BYOCGatewayServer) createPayment(ctx context.Context, jobReq *JobRequ
 		//create the payment
 		payment = &net.Payment{
 			Sender:        sender.Bytes(),
-			ExpectedPrice: orchToken.Price,
+			ExpectedPrice: orchPriceInfo,
 			TicketParams:  orchToken.TicketParams,
 			ExpirationParams: &net.TicketExpirationParams{
 				CreationRound:          tickets.CreationRound,
@@ -149,11 +153,11 @@ func (bsg *BYOCGatewayServer) createPayment(ctx context.Context, jobReq *JobRequ
 		senderParams := make([]*net.TicketSenderParams, len(tickets.SenderParams))
 		for i := 0; i < len(tickets.SenderParams); i++ {
 			senderParams[i] = &net.TicketSenderParams{
-				SenderNonce: orchToken.LastNonce + tickets.SenderParams[i].SenderNonce,
+				SenderNonce: orchToken.lastNonce + tickets.SenderParams[i].SenderNonce,
 				Sig:         tickets.SenderParams[i].Sig,
 			}
 		}
-		orchToken.LastNonce = tickets.SenderParams[len(tickets.SenderParams)-1].SenderNonce + 1
+		orchToken.lastNonce = tickets.SenderParams[len(tickets.SenderParams)-1].SenderNonce + 1
 		payment.TicketSenderParams = senderParams
 
 		ratPrice, _ := common.RatPriceInfo(payment.ExpectedPrice)
@@ -204,8 +208,16 @@ func ticketCountForCost(cost *big.Rat, ticketEv *big.Rat, timeoutSeconds int64) 
 
 func updateGatewayBalance(node *core.LivepeerNode, orchToken JobToken, capability string, took time.Duration) *big.Rat {
 	orchAddr := ethcommon.BytesToAddress(orchToken.TicketParams.Recipient)
+	orchPriceInfo := orchToken.SelectedRunnerPriceInfo()
+	if orchPriceInfo == nil {
+		balance := node.Balances.Balance(orchAddr, core.ManifestID(capability))
+		if balance == nil {
+			return big.NewRat(0, 1)
+		}
+		return balance
+	}
 	// update for usage of compute
-	orchPrice := big.NewRat(orchToken.Price.PricePerUnit, orchToken.Price.PixelsPerUnit)
+	orchPrice := big.NewRat(orchPriceInfo.PricePerUnit, orchPriceInfo.PixelsPerUnit)
 	cost := new(big.Rat).Mul(orchPrice, big.NewRat(int64(math.Ceil(took.Seconds())), 1))
 	node.Balances.Debit(orchAddr, core.ManifestID(capability), cost)
 

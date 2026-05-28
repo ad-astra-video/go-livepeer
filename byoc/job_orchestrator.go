@@ -166,7 +166,7 @@ func (bso *BYOCOrchestratorServer) GetJobToken() http.Handler {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		jobToken := JobToken{SenderAddress: nil, TicketParams: nil, Balance: 0, Price: nil}
+		jobToken := JobToken{SenderAddress: nil, TicketParams: nil, Balance: 0}
 
 		capacity := orch.CheckExternalCapabilityCapacity(jobCapsHdr)
 
@@ -213,9 +213,10 @@ func (bso *BYOCOrchestratorServer) GetJobToken() http.Handler {
 			SenderAddress:     jobSenderAddr,
 			TicketParams:      ticketParams,
 			Balance:           capBalInt,
-			Price:             jobPrice,
 			ServiceAddr:       orch.ServiceURI().String(),
 			AvailableCapacity: capacity,
+			RunnerIDs:         orch.AvailableExternalRunnerIDs(jobCapsHdr),
+			RunnerPrices:      bso.runnerPricesForCapability(jobCapsHdr),
 		}
 
 		//send response indicating compatible
@@ -223,6 +224,29 @@ func (bso *BYOCOrchestratorServer) GetJobToken() http.Handler {
 
 		json.NewEncoder(w).Encode(jobToken)
 	})
+}
+
+func (bso *BYOCOrchestratorServer) runnerPricesForCapability(capability string) []RunnerPrice {
+	runnerIDs := bso.orch.AvailableExternalRunnerIDs(capability)
+	runnerPrices := make([]RunnerPrice, 0, len(runnerIDs))
+	for _, runnerID := range runnerIDs {
+		extCap, ok := bso.orch.GetExternalCapability(runnerID)
+		if !ok {
+			continue
+		}
+		price, err := common.PriceToInt64(extCap.GetPrice())
+		if err != nil {
+			continue
+		}
+		runnerPrices = append(runnerPrices, RunnerPrice{
+			RunnerId: runnerID,
+			Price: &net.PriceInfo{
+				PricePerUnit:  price.Num().Int64(),
+				PixelsPerUnit: price.Denom().Int64(),
+			},
+		})
+	}
+	return runnerPrices
 }
 
 func (bso *BYOCOrchestratorServer) ProcessJob() http.Handler {
@@ -497,7 +521,7 @@ func (bso *BYOCOrchestratorServer) setupOrchJob(ctx context.Context, r *http.Req
 
 	sender := ethcommon.HexToAddress(jobReq.Sender)
 
-	jobPrice, err := orch.JobPriceInfo(sender, jobReq.Capability)
+	jobPrice, err := bso.resolveJobPrice(sender, jobReq, runnerKey)
 	if err != nil {
 		return nil, errors.New("Could not get job price")
 	}
@@ -522,6 +546,26 @@ func (bso *BYOCOrchestratorServer) setupOrchJob(ctx context.Context, r *http.Req
 	}
 
 	return &orchJob{Req: jobReq, Sender: sender, JobPrice: jobPrice, Details: &jobDetails, RunnerKey: runnerKey}, nil
+}
+
+func (bso *BYOCOrchestratorServer) resolveJobPrice(sender ethcommon.Address, jobReq *JobRequest, runnerKey string) (*net.PriceInfo, error) {
+	if runnerKey != "" && strings.TrimSpace(jobReq.Parameters) != "" {
+		var jobParams JobParameters
+		if err := json.Unmarshal([]byte(jobReq.Parameters), &jobParams); err == nil && jobParams.RunnerId != "" {
+			if extCap, ok := bso.orch.GetExternalCapability(runnerKey); ok {
+				runnerPrice, err := common.PriceToInt64(extCap.GetPrice())
+				if err != nil {
+					return nil, err
+				}
+				return &net.PriceInfo{
+					PricePerUnit:  runnerPrice.Num().Int64(),
+					PixelsPerUnit: runnerPrice.Denom().Int64(),
+				}, nil
+			}
+		}
+	}
+
+	return bso.orch.JobPriceInfo(sender, jobReq.Capability)
 }
 
 func (bso *BYOCOrchestratorServer) confirmPayment(ctx context.Context, sender ethcommon.Address, capability string, runnerKey string, jobPrice *net.PriceInfo, paymentHdr string) error {
@@ -620,13 +664,33 @@ func (bso *BYOCOrchestratorServer) verifyJobCreds(ctx context.Context, jobCreds 
 		return nil, "", errSegSig
 	}
 
+	var jobParams JobParameters
+	if strings.TrimSpace(jobData.Parameters) != "" {
+		if err := json.Unmarshal([]byte(jobData.Parameters), &jobParams); err != nil {
+			clog.Errorf(ctx, "Unable to parse job parameters err=%v", err)
+			return nil, "", err
+		}
+	}
+
 	if reserveCapacity {
-		extCap, err := bso.orch.ReserveExternalCapability(jobData.Capability)
+		var extCap *core.ExternalCapability
+		if jobParams.RunnerId != "" {
+			extCap, err = bso.orch.ReserveExternalCapabilityByKey(jobParams.RunnerId)
+		} else {
+			extCap, err = bso.orch.ReserveExternalCapability(jobData.Capability)
+		}
 		if err != nil {
 			return nil, "", errZeroCapacity
 		}
 		jobData.CapabilityUrl = extCap.Url
 		return jobData, extCap.Key, nil
+	}
+
+	if jobParams.RunnerId != "" {
+		if extCap, ok := bso.orch.GetExternalCapability(jobParams.RunnerId); ok {
+			jobData.CapabilityUrl = extCap.Url
+			return jobData, extCap.Key, nil
+		}
 	}
 
 	jobData.CapabilityUrl = bso.orch.GetUrlForCapability(jobData.Capability)
