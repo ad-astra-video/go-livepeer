@@ -5,24 +5,30 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
+	"net/url"
+	"sort"
 	"time"
 
 	"sync"
 
 	ethcommon "github.com/ethereum/go-ethereum/common"
 	"github.com/golang/glog"
+	"github.com/livepeer/go-livepeer/monitor"
 	"github.com/livepeer/go-livepeer/trickle"
 )
 
 type ExternalCapability struct {
+	ID            string `json:"id,omitempty"`
 	Name          string `json:"name"`
 	Description   string `json:"description"`
 	Url           string `json:"url"`
+	Order         int    `json:"order,omitempty"`
 	Capacity      int    `json:"capacity"`
 	PricePerUnit  int64  `json:"price_per_unit"`
 	PriceScaling  int64  `json:"price_scaling"`
 	PriceCurrency string `json:"currency"`
 	AuthToken     string `json:"token"`
+	Key           string `json:"key,omitempty"`
 
 	price *AutoConvertedPrice
 
@@ -33,6 +39,8 @@ type ExternalCapability struct {
 type StreamInfo struct {
 	StreamID   string
 	Capability string
+	RunnerKey  string
+	WorkerURL  string
 
 	//Orchestrator fields
 	Sender         ethcommon.Address
@@ -79,6 +87,13 @@ func (sd *StreamInfo) SetChannels(pub, sub, control, events, data *trickle.Trick
 	sd.controlChannel = control
 	sd.eventsChannel = events
 	sd.dataChannel = data
+}
+
+func (sd *StreamInfo) SetRunner(runnerKey, workerURL string) {
+	sd.sdm.Lock()
+	defer sd.sdm.Unlock()
+	sd.RunnerKey = runnerKey
+	sd.WorkerURL = workerURL
 }
 
 func (sd *StreamInfo) cleanup() {
@@ -190,13 +205,30 @@ func (extCaps *ExternalCapabilities) StreamExists(streamID string) bool {
 }
 
 func (extCaps *ExternalCapabilities) RemoveCapability(extCap string) {
+	if extCaps == nil {
+		return
+	}
+
 	extCaps.capm.Lock()
 	defer extCaps.capm.Unlock()
 
-	delete(extCaps.Capabilities, extCap)
+	if _, ok := extCaps.Capabilities[extCap]; ok {
+		delete(extCaps.Capabilities, extCap)
+		return
+	}
+
+	for key, cap := range extCaps.Capabilities {
+		if cap.Name == extCap {
+			delete(extCaps.Capabilities, key)
+		}
+	}
 }
 
 func (extCaps *ExternalCapabilities) RegisterCapability(extCapability string) (*ExternalCapability, error) {
+	if extCaps == nil {
+		return nil, fmt.Errorf("external capabilities not initialized")
+	}
+
 	extCaps.capm.Lock()
 	defer extCaps.capm.Unlock()
 	if extCaps.Capabilities == nil {
@@ -207,6 +239,12 @@ func (extCaps *ExternalCapabilities) RegisterCapability(extCapability string) (*
 	if err != nil {
 		return nil, err
 	}
+
+	key, err := extCap.registrationKey()
+	if err != nil {
+		return nil, err
+	}
+	extCap.Key = key
 
 	//ensure PriceScaling is not 0
 	if extCap.PriceScaling == 0 {
@@ -219,16 +257,229 @@ func (extCaps *ExternalCapabilities) RegisterCapability(extCapability string) (*
 	if err != nil {
 		panic(fmt.Errorf("error converting price: %v", err))
 	}
-	if cap, ok := extCaps.Capabilities[extCap.Name]; ok {
+	if cap, ok := extCaps.Capabilities[key]; ok {
+		cap.ID = extCap.ID
+		cap.Name = extCap.Name
+		cap.Description = extCap.Description
 		cap.Url = extCap.Url
+		cap.Order = extCap.Order
 		cap.Capacity = extCap.Capacity
+		cap.PricePerUnit = extCap.PricePerUnit
+		cap.PriceScaling = extCap.PriceScaling
+		cap.PriceCurrency = extCap.PriceCurrency
 		cap.price = extCap.price
 		cap.AuthToken = extCap.AuthToken
+		cap.Key = key
+		return cap, nil
 	}
 
-	extCaps.Capabilities[extCap.Name] = &extCap
+	extCaps.Capabilities[key] = &extCap
 
 	return &extCap, err
+}
+
+func (extCaps *ExternalCapabilities) GetCapabilityByKey(key string) (*ExternalCapability, bool) {
+	if extCaps == nil {
+		return nil, false
+	}
+
+	extCaps.capm.Lock()
+	defer extCaps.capm.Unlock()
+	cap, ok := extCaps.Capabilities[key]
+	return cap, ok
+}
+
+func (extCaps *ExternalCapabilities) GetCapabilitiesByName(name string) []*ExternalCapability {
+	if extCaps == nil {
+		return nil
+	}
+
+	extCaps.capm.Lock()
+	defer extCaps.capm.Unlock()
+	return extCaps.capabilitiesByName(name)
+}
+
+func (extCaps *ExternalCapabilities) GetCapabilityByName(name string) (*ExternalCapability, bool) {
+	if extCaps == nil {
+		return nil, false
+	}
+
+	caps := extCaps.GetCapabilitiesByName(name)
+	if len(caps) == 0 {
+		return nil, false
+	}
+	return caps[0], true
+}
+
+func (extCaps *ExternalCapabilities) ReserveCapability(name string) (*ExternalCapability, error) {
+	if extCaps == nil {
+		return nil, fmt.Errorf("external capability not found")
+	}
+
+	extCaps.capm.Lock()
+
+	for _, cap := range extCaps.capabilitiesByName(name) {
+		cap.Mu.Lock()
+		if cap.Load < cap.Capacity {
+			cap.Load++
+			currentLoad := cap.Load
+			capabilityName := cap.Name
+			runnerKey := cap.Key
+			cap.Mu.Unlock()
+			extCaps.capm.Unlock()
+			monitor.AIRunnerAllocationsInFlight(capabilityName, runnerKey, int64(currentLoad))
+			return cap, nil
+		}
+		cap.Mu.Unlock()
+	}
+	extCaps.capm.Unlock()
+
+	return nil, fmt.Errorf("external capability not found")
+}
+
+func (extCaps *ExternalCapabilities) ReserveCapabilityByKey(key string) (*ExternalCapability, error) {
+	if extCaps == nil {
+		return nil, fmt.Errorf("external capability not found")
+	}
+
+	extCaps.capm.Lock()
+	cap, ok := extCaps.Capabilities[key]
+	if !ok {
+		extCaps.capm.Unlock()
+		return nil, fmt.Errorf("external capability not found")
+	}
+
+	cap.Mu.Lock()
+	if cap.Load >= cap.Capacity {
+		cap.Mu.Unlock()
+		extCaps.capm.Unlock()
+		return nil, fmt.Errorf("external capability not found")
+	}
+	cap.Load++
+	currentLoad := cap.Load
+	capabilityName := cap.Name
+	runnerKey := cap.Key
+	cap.Mu.Unlock()
+	extCaps.capm.Unlock()
+	monitor.AIRunnerAllocationsInFlight(capabilityName, runnerKey, int64(currentLoad))
+	return cap, nil
+}
+
+func (extCaps *ExternalCapabilities) FreeCapability(key string) error {
+	if extCaps == nil {
+		return fmt.Errorf("external capability not found")
+	}
+
+	extCaps.capm.Lock()
+
+	if cap, ok := extCaps.Capabilities[key]; ok {
+		cap.Mu.Lock()
+		if cap.Load > 0 {
+			cap.Load--
+		}
+		currentLoad := cap.Load
+		capabilityName := cap.Name
+		runnerKey := cap.Key
+		cap.Mu.Unlock()
+		extCaps.capm.Unlock()
+		monitor.AIRunnerAllocationsInFlight(capabilityName, runnerKey, int64(currentLoad))
+		return nil
+	}
+
+	for _, cap := range extCaps.capabilitiesByName(key) {
+		cap.Mu.Lock()
+		if cap.Load > 0 {
+			cap.Load--
+			currentLoad := cap.Load
+			capabilityName := cap.Name
+			runnerKey := cap.Key
+			cap.Mu.Unlock()
+			extCaps.capm.Unlock()
+			monitor.AIRunnerAllocationsInFlight(capabilityName, runnerKey, int64(currentLoad))
+			return nil
+		}
+		cap.Mu.Unlock()
+	}
+	extCaps.capm.Unlock()
+
+	return fmt.Errorf("external capability not found")
+}
+
+func (extCaps *ExternalCapabilities) AvailableCapacity(name string) int64 {
+	if extCaps == nil {
+		return 0
+	}
+
+	extCaps.capm.Lock()
+	defer extCaps.capm.Unlock()
+
+	var total int64
+	for _, cap := range extCaps.capabilitiesByName(name) {
+		cap.Mu.RLock()
+		remaining := cap.Capacity - cap.Load
+		cap.Mu.RUnlock()
+		if remaining > 0 {
+			total += int64(remaining)
+		}
+	}
+
+	return total
+}
+
+func (extCaps *ExternalCapabilities) AvailableRunnerIDs(name string) []string {
+	if extCaps == nil {
+		return nil
+	}
+
+	extCaps.capm.Lock()
+	defer extCaps.capm.Unlock()
+
+	var runnerIDs []string
+	for _, cap := range extCaps.capabilitiesByName(name) {
+		cap.Mu.RLock()
+		remaining := cap.Capacity - cap.Load
+		runnerKey := cap.Key
+		cap.Mu.RUnlock()
+		if remaining > 0 {
+			runnerIDs = append(runnerIDs, runnerKey)
+		}
+	}
+
+	return runnerIDs
+}
+
+// caller should hold the extCaps.capm.Lock()
+func (extCaps *ExternalCapabilities) capabilitiesByName(name string) []*ExternalCapability {
+	var caps []*ExternalCapability
+	for _, cap := range extCaps.Capabilities {
+		if cap.Name == name {
+			caps = append(caps, cap)
+		}
+	}
+
+	sort.Slice(caps, func(i, j int) bool {
+		if caps[i].Order != caps[j].Order {
+			return caps[i].Order < caps[j].Order
+		}
+		return caps[i].Key < caps[j].Key
+	})
+
+	return caps
+}
+
+func (extCap *ExternalCapability) registrationKey() (string, error) {
+	if extCap.ID != "" {
+		return extCap.ID, nil
+	}
+
+	parsedURL, err := url.Parse(extCap.Url)
+	if err != nil {
+		return "", err
+	}
+	if parsedURL.Host == "" {
+		return "", fmt.Errorf("runner url must include host:port")
+	}
+	return "runner_" + string(RandomManifestID()), nil
 }
 
 func (extCap *ExternalCapability) GetPrice() *big.Rat {

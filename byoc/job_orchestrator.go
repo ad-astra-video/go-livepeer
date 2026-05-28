@@ -20,6 +20,7 @@ import (
 	"github.com/livepeer/go-livepeer/clog"
 	"github.com/livepeer/go-livepeer/common"
 	"github.com/livepeer/go-livepeer/core"
+	"github.com/livepeer/go-livepeer/monitor"
 	"github.com/livepeer/go-livepeer/net"
 
 	ethcommon "github.com/ethereum/go-ethereum/common"
@@ -27,6 +28,10 @@ import (
 	"github.com/golang/glog"
 	"github.com/pkg/errors"
 )
+
+type unregisterCapabilityRequest struct {
+	ID string `json:"id"`
+}
 
 // worker registers to Orchestrator
 func (bs *BYOCOrchestratorServer) RegisterCapability() http.Handler {
@@ -87,7 +92,7 @@ func (bs *BYOCOrchestratorServer) UnregisterCapability() http.Handler {
 			return
 		}
 		defer r.Body.Close()
-		extCapName := string(body)
+		extCapName := parseUnregisterCapabilityRequest(body)
 		remoteAddr := getRemoteAddr(r)
 
 		err = orch.RemoveExternalCapability(extCapName)
@@ -108,6 +113,20 @@ func (bs *BYOCOrchestratorServer) UnregisterCapability() http.Handler {
 		w.Write([]byte("ok"))
 		clog.Infof(context.TODO(), "removed capability remoteAddr=%v capability=%v", remoteAddr, extCapName)
 	})
+}
+
+func parseUnregisterCapabilityRequest(body []byte) string {
+	trimmedBody := bytes.TrimSpace(body)
+	if len(trimmedBody) == 0 {
+		return ""
+	}
+
+	var req unregisterCapabilityRequest
+	if err := json.Unmarshal(trimmedBody, &req); err == nil && req.ID != "" {
+		return req.ID
+	}
+
+	return string(trimmedBody)
 }
 
 func (bso *BYOCOrchestratorServer) GetJobToken() http.Handler {
@@ -147,7 +166,7 @@ func (bso *BYOCOrchestratorServer) GetJobToken() http.Handler {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		jobToken := JobToken{SenderAddress: nil, TicketParams: nil, Balance: 0, Price: nil}
+		jobToken := JobToken{SenderAddress: nil, TicketParams: nil, Balance: 0}
 
 		capacity := orch.CheckExternalCapabilityCapacity(jobCapsHdr)
 
@@ -194,9 +213,10 @@ func (bso *BYOCOrchestratorServer) GetJobToken() http.Handler {
 			SenderAddress:     jobSenderAddr,
 			TicketParams:      ticketParams,
 			Balance:           capBalInt,
-			Price:             jobPrice,
 			ServiceAddr:       orch.ServiceURI().String(),
 			AvailableCapacity: capacity,
+			RunnerIDs:         orch.AvailableExternalRunnerIDs(jobCapsHdr),
+			RunnerPrices:      bso.runnerPricesForCapability(jobCapsHdr),
 		}
 
 		//send response indicating compatible
@@ -204,6 +224,29 @@ func (bso *BYOCOrchestratorServer) GetJobToken() http.Handler {
 
 		json.NewEncoder(w).Encode(jobToken)
 	})
+}
+
+func (bso *BYOCOrchestratorServer) runnerPricesForCapability(capability string) []RunnerPrice {
+	runnerIDs := bso.orch.AvailableExternalRunnerIDs(capability)
+	runnerPrices := make([]RunnerPrice, 0, len(runnerIDs))
+	for _, runnerID := range runnerIDs {
+		extCap, ok := bso.orch.GetExternalCapability(runnerID)
+		if !ok {
+			continue
+		}
+		price, err := common.PriceToInt64(extCap.GetPrice())
+		if err != nil {
+			continue
+		}
+		runnerPrices = append(runnerPrices, RunnerPrice{
+			RunnerId: runnerID,
+			Price: &net.PriceInfo{
+				PricePerUnit:  price.Num().Int64(),
+				PixelsPerUnit: price.Denom().Int64(),
+			},
+		})
+	}
+	return runnerPrices
 }
 
 func (bso *BYOCOrchestratorServer) ProcessJob() http.Handler {
@@ -273,8 +316,8 @@ func (bso *BYOCOrchestratorServer) processJob(ctx context.Context, w http.Respon
 	req.Header.Add("Content-Length", r.Header.Get("Content-Length"))
 	req.Header.Add("Content-Type", r.Header.Get("Content-Type"))
 
-	// Add Authorization header if auth token is set for this capability
-	if extCap, ok := bso.node.ExternalCapabilities.Capabilities[orchJob.Req.Capability]; ok {
+	// Add Authorization header if auth token is set for the selected runner registration.
+	if extCap, ok := bso.orch.GetExternalCapability(orchJob.RunnerKey); ok {
 		if extCap.AuthToken != "" {
 			req.Header.Add("Authorization", "Bearer "+extCap.AuthToken)
 		}
@@ -287,8 +330,8 @@ func (bso *BYOCOrchestratorServer) processJob(ctx context.Context, w http.Respon
 		//if the request failed with connection error, remove the capability
 		//exclude deadline exceeded or context canceled errors does not indicate a fatal error all the time
 		if err != context.DeadlineExceeded && !strings.Contains(err.Error(), "context canceled") {
-			clog.Errorf(ctx, "removing capability %v due to error %v", orchJob.Req.Capability, err.Error())
-			bso.orch.RemoveExternalCapability(orchJob.Req.Capability)
+			clog.Errorf(ctx, "removing runner %v due to error %v", orchJob.RunnerKey, err.Error())
+			bso.orch.RemoveExternalCapability(orchJob.RunnerKey)
 		}
 
 		bso.chargeForCompute(start, orchJob.JobPrice, orchJob.Sender, orchJob.Req.Capability)
@@ -299,22 +342,43 @@ func (bso *BYOCOrchestratorServer) processJob(ctx context.Context, w http.Respon
 
 	// Check for 401 Unauthorized - remove capability so worker can re-register with correct token
 	if resp.StatusCode == http.StatusUnauthorized {
-		clog.Errorf(ctx, "received 401 Unauthorized from worker, removing capability %v", orchJob.Req.Capability)
-		bso.orch.RemoveExternalCapability(orchJob.Req.Capability)
+		clog.Errorf(ctx, "received 401 Unauthorized from worker, removing runner %v", orchJob.RunnerKey)
+		bso.orch.RemoveExternalCapability(orchJob.RunnerKey)
 		bso.chargeForCompute(start, orchJob.JobPrice, orchJob.Sender, orchJob.Req.Capability)
 		w.Header().Set(jobPaymentBalanceHdr, bso.getPaymentBalance(orchJob.Sender, orchJob.Req.Capability).FloatString(0))
 		http.Error(w, "job not able to be processed, removing capability err=worker auth token failed", http.StatusInternalServerError)
 		return
 	}
 
-	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
+	contentType := resp.Header.Get("Content-Type")
+	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("X-Metadata", resp.Header.Get("X-Metadata"))
 
 	//release capacity for another request
 	// if requester closes the connection need to release capacity
-	defer bso.orch.FreeExternalCapabilityCapacity(orchJob.Req.Capability)
+	defer bso.orch.FreeExternalCapabilityCapacity(orchJob.RunnerKey)
 
-	if !strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
+	if !isSSEContentType(contentType) {
+		if isHTTPStreamingResponse(resp) {
+			bso.addPaymentBalanceHeader(w, orchJob.Sender, orchJob.Req.Capability)
+			w.WriteHeader(resp.StatusCode)
+
+			err = proxyHTTPStreamResponse(w, resp)
+
+			bso.chargeForCompute(start, orchJob.JobPrice, orchJob.Sender, orchJob.Req.Capability)
+			finalBalance := bso.getPaymentBalance(orchJob.Sender, orchJob.Req.Capability).FloatString(0)
+			if err == nil {
+				err = writeFinalBalanceChunk(w, contentType, finalBalance)
+			}
+			if err != nil {
+				clog.Errorf(ctx, "Unable to stream response err=%v", err)
+				return
+			}
+
+			clog.V(common.SHORT).Infof(ctx, "Job processed successfully took=%v balance=%v", time.Since(start), finalBalance)
+			return
+		}
+
 		//non streaming response
 
 		defer resp.Body.Close()
@@ -342,6 +406,7 @@ func (bso *BYOCOrchestratorServer) processJob(ctx context.Context, w http.Respon
 		bso.chargeForCompute(start, orchJob.JobPrice, orchJob.Sender, orchJob.Req.Capability)
 		w.Header().Set(jobPaymentBalanceHdr, bso.getPaymentBalance(orchJob.Sender, orchJob.Req.Capability).FloatString(0))
 		clog.V(common.SHORT).Infof(ctx, "Job processed successfully took=%v balance=%v", time.Since(start), bso.getPaymentBalance(orchJob.Sender, orchJob.Req.Capability).FloatString(0))
+		w.WriteHeader(resp.StatusCode)
 		w.Write(data)
 		//request completed and returned a response
 
@@ -442,7 +507,7 @@ func (bso *BYOCOrchestratorServer) processJob(ctx context.Context, w http.Respon
 func (bso *BYOCOrchestratorServer) setupOrchJob(ctx context.Context, r *http.Request, reserveCapacity bool) (*orchJob, error) {
 	job := r.Header.Get(jobRequestHdr)
 	orch := bso.orch
-	jobReq, err := bso.verifyJobCreds(ctx, job, reserveCapacity)
+	jobReq, runnerKey, err := bso.verifyJobCreds(ctx, job, reserveCapacity)
 	if err != nil {
 		if err == errZeroCapacity && reserveCapacity {
 			return nil, errNoCapabilityCapacity
@@ -456,14 +521,16 @@ func (bso *BYOCOrchestratorServer) setupOrchJob(ctx context.Context, r *http.Req
 
 	sender := ethcommon.HexToAddress(jobReq.Sender)
 
-	jobPrice, err := orch.JobPriceInfo(sender, jobReq.Capability)
+	jobPrice, err := bso.resolveJobPrice(sender, jobReq, runnerKey)
 	if err != nil {
 		return nil, errors.New("Could not get job price")
 	}
 
-	pmtErr := bso.confirmPayment(ctx, sender, jobReq.Capability, jobPrice, r.Header.Get(jobPaymentHeaderHdr))
+	pmtErr := bso.confirmPayment(ctx, sender, jobReq.Capability, runnerKey, jobPrice, r.Header.Get(jobPaymentHeaderHdr))
 	if pmtErr != nil {
-		orch.FreeExternalCapabilityCapacity(jobReq.Capability)
+		if runnerKey != "" {
+			orch.FreeExternalCapabilityCapacity(runnerKey)
+		}
 		return nil, pmtErr
 	}
 
@@ -474,11 +541,34 @@ func (bso *BYOCOrchestratorServer) setupOrchJob(ctx context.Context, r *http.Req
 	}
 
 	clog.Infof(ctx, "job request verified id=%v sender=%v capability=%v timeout=%v", jobReq.ID, jobReq.Sender, jobReq.Capability, jobReq.Timeout)
+	if reserveCapacity {
+		monitor.AIRunnerAllocated(jobReq.Capability, runnerKey)
+	}
 
-	return &orchJob{Req: jobReq, Sender: sender, JobPrice: jobPrice, Details: &jobDetails}, nil
+	return &orchJob{Req: jobReq, Sender: sender, JobPrice: jobPrice, Details: &jobDetails, RunnerKey: runnerKey}, nil
 }
 
-func (bso *BYOCOrchestratorServer) confirmPayment(ctx context.Context, sender ethcommon.Address, capability string, jobPrice *net.PriceInfo, paymentHdr string) error {
+func (bso *BYOCOrchestratorServer) resolveJobPrice(sender ethcommon.Address, jobReq *JobRequest, runnerKey string) (*net.PriceInfo, error) {
+	if runnerKey != "" && strings.TrimSpace(jobReq.Parameters) != "" {
+		var jobParams JobParameters
+		if err := json.Unmarshal([]byte(jobReq.Parameters), &jobParams); err == nil && jobParams.RunnerId != "" {
+			if extCap, ok := bso.orch.GetExternalCapability(runnerKey); ok {
+				runnerPrice, err := common.PriceToInt64(extCap.GetPrice())
+				if err != nil {
+					return nil, err
+				}
+				return &net.PriceInfo{
+					PricePerUnit:  runnerPrice.Num().Int64(),
+					PixelsPerUnit: runnerPrice.Denom().Int64(),
+				}, nil
+			}
+		}
+	}
+
+	return bso.orch.JobPriceInfo(sender, jobReq.Capability)
+}
+
+func (bso *BYOCOrchestratorServer) confirmPayment(ctx context.Context, sender ethcommon.Address, capability string, runnerKey string, jobPrice *net.PriceInfo, paymentHdr string) error {
 
 	clog.V(common.DEBUG).Infof(ctx, "job price=%v units=%v", jobPrice.PricePerUnit, jobPrice.PixelsPerUnit)
 
@@ -488,7 +578,7 @@ func (bso *BYOCOrchestratorServer) confirmPayment(ctx context.Context, sender et
 	if jobPriceRat.Cmp(big.NewRat(0, 1)) > 0 {
 		minBal := new(big.Rat).Mul(jobPriceRat, big.NewRat(60, 1)) //minimum 1 minute balance
 		//process payment if included
-		orchBal, pmtErr := bso.processPayment(ctx, sender, capability, paymentHdr)
+		orchBal, pmtErr := bso.processPayment(ctx, sender, capability, runnerKey, paymentHdr)
 		if pmtErr != nil {
 			//log if there are payment errors but continue, balance will runout and clean up
 			clog.Infof(ctx, "job payment error: %v", pmtErr)
@@ -503,7 +593,7 @@ func (bso *BYOCOrchestratorServer) confirmPayment(ctx context.Context, sender et
 }
 
 // process payment and return balance
-func (bso *BYOCOrchestratorServer) processPayment(ctx context.Context, sender ethcommon.Address, capability string, paymentHdr string) (*big.Rat, error) {
+func (bso *BYOCOrchestratorServer) processPayment(ctx context.Context, sender ethcommon.Address, capability string, runnerKey string, paymentHdr string) (*big.Rat, error) {
 	if paymentHdr != "" {
 		payment, err := getPayment(paymentHdr)
 		if err != nil {
@@ -512,7 +602,9 @@ func (bso *BYOCOrchestratorServer) processPayment(ctx context.Context, sender et
 		}
 
 		if err := bso.orch.ProcessPayment(ctx, payment, core.ManifestID(capability)); err != nil {
-			bso.orch.FreeExternalCapabilityCapacity(capability)
+			if runnerKey != "" {
+				bso.orch.FreeExternalCapabilityCapacity(runnerKey)
+			}
 			clog.Errorf(ctx, "Error processing payment: %v", err)
 			return nil, errPaymentError
 		}
@@ -532,6 +624,7 @@ func (bso *BYOCOrchestratorServer) chargeForCompute(start time.Time, price *net.
 func (bso *BYOCOrchestratorServer) addPaymentBalanceHeader(w http.ResponseWriter, sender ethcommon.Address, jobId string) {
 	//check balance and return remaning balance in header of response
 	senderBalance := bso.getPaymentBalance(sender, jobId)
+	w.Header().Set(jobPaymentBalanceHdr, senderBalance.FloatString(0))
 	w.Header().Set("Livepeer-Payment-Balance", senderBalance.FloatString(0))
 }
 
@@ -545,15 +638,15 @@ func (bso *BYOCOrchestratorServer) getPaymentBalance(sender ethcommon.Address, j
 	return senderBalance
 }
 
-func (bso *BYOCOrchestratorServer) verifyJobCreds(ctx context.Context, jobCreds string, reserveCapacity bool) (*JobRequest, error) {
+func (bso *BYOCOrchestratorServer) verifyJobCreds(ctx context.Context, jobCreds string, reserveCapacity bool) (*JobRequest, string, error) {
 	jobData, err := parseJobRequest(jobCreds)
 	if err != nil {
 		glog.Error("Unable to unmarshal ", err)
-		return nil, err
+		return nil, "", err
 	}
 
 	if jobData.Timeout == 0 {
-		return nil, errNoTimeoutSet
+		return nil, "", errNoTimeoutSet
 	}
 
 	sigHex := jobData.Sig
@@ -563,21 +656,49 @@ func (bso *BYOCOrchestratorServer) verifyJobCreds(ctx context.Context, jobCreds 
 	sigByte, err := hex.DecodeString(sigHex)
 	if err != nil {
 		clog.Errorf(ctx, "Unable to hex-decode signature", err)
-		return nil, errSegSig
+		return nil, "", errSegSig
 	}
 
 	if !bso.orch.VerifySig(ethcommon.HexToAddress(jobData.Sender), jobData.Request+jobData.Parameters, sigByte) {
 		clog.Errorf(ctx, "Sig check failed sender=%v", jobData.Sender)
-		return nil, errSegSig
+		return nil, "", errSegSig
 	}
 
-	if reserveCapacity && bso.orch.ReserveExternalCapabilityCapacity(jobData.Capability) != nil {
-		return nil, errZeroCapacity
+	var jobParams JobParameters
+	if strings.TrimSpace(jobData.Parameters) != "" {
+		if err := json.Unmarshal([]byte(jobData.Parameters), &jobParams); err != nil {
+			clog.Errorf(ctx, "Unable to parse job parameters err=%v", err)
+			return nil, "", err
+		}
+	}
+
+	if reserveCapacity {
+		var extCap *core.ExternalCapability
+		if jobParams.RunnerId != "" {
+			extCap, err = bso.orch.ReserveExternalCapabilityByKey(jobParams.RunnerId)
+		} else {
+			extCap, err = bso.orch.ReserveExternalCapability(jobData.Capability)
+		}
+		if err != nil {
+			return nil, "", errZeroCapacity
+		}
+		jobData.CapabilityUrl = extCap.Url
+		return jobData, extCap.Key, nil
+	}
+
+	if jobParams.RunnerId != "" {
+		if extCap, ok := bso.orch.GetExternalCapability(jobParams.RunnerId); ok {
+			jobData.CapabilityUrl = extCap.Url
+			return jobData, extCap.Key, nil
+		}
 	}
 
 	jobData.CapabilityUrl = bso.orch.GetUrlForCapability(jobData.Capability)
+	if extCap, ok := bso.node.ExternalCapabilities.GetCapabilityByName(jobData.Capability); ok {
+		return jobData, extCap.Key, nil
+	}
 
-	return jobData, nil
+	return jobData, "", nil
 }
 
 func (bso *BYOCOrchestratorServer) verifyTokenCreds(ctx context.Context, tokenCreds string) (*JobSender, error) {

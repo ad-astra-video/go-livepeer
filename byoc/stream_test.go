@@ -207,6 +207,7 @@ func orchAIStreamStartNoUrlsHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Control-Url", fmt.Sprintf("%s%s%s", stubOrchServerUrl, "/ai/trickle/", "test-stream-control"))
+	w.Header().Set("X-JSON-Url", fmt.Sprintf("%s%s%s", stubOrchServerUrl, "/ai/trickle/", "test-stream-json"))
 	w.Header().Set("X-Events-Url", fmt.Sprintf("%s%s%s", stubOrchServerUrl, "/ai/trickle/", "test-stream-events"))
 	w.WriteHeader(http.StatusOK)
 }
@@ -781,9 +782,73 @@ func TestStartStreamHandler(t *testing.T) {
 		assert.NoError(t, err)
 		assert.NotNil(t, stream)
 		assert.Equal(t, streamUrls.StreamId, stream.StreamID)
+		assert.Equal(t, "runner-a", streamUrls.RunnerId)
 
 		//kick the orch to stop the stream and cleanup
 		<-orch1Started
+		streamParams, _ := bsg.streamPipelineParams(streamUrls.StreamId)
+		if streamParams.liveParams.kickOrch != nil {
+			streamParams.liveParams.kickOrch(errors.New("test cleanup"))
+		}
+		bsg.node.Balances.StopCleanup()
+	})
+}
+
+func TestStartStreamHandler_UsesIncludedRunner(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		node := mockJobLivepeerNode()
+		mux := http.NewServeMux()
+		bsg := newTestBYOCGatewayServer(node)
+		orchStarted := make(chan struct{}, 1)
+		mockSender := pm.MockSender{}
+		mockSender.On("StartSession", mock.Anything).Return("foo")
+		mockSender.On("CreateTicketBatch", mock.Anything, mock.Anything).Return(mockTicketBatch(10), nil)
+		node.Sender = &mockSender
+		node.Balances = core.NewAddressBalances(1 * time.Second)
+
+		mux.HandleFunc("/process/token", func(w http.ResponseWriter, r *http.Request) {
+			token := createMockJobToken("http://" + r.Host)
+			token.RunnerIDs = []string{"runner-a", "runner-b"}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(token)
+		})
+		mux.HandleFunc("/ai/stream/start", func(w http.ResponseWriter, r *http.Request) {
+			select {
+			case orchStarted <- struct{}{}:
+			default:
+			}
+			jobReq, err := parseJobRequest(r.Header.Get(jobRequestHdr))
+			assert.NoError(t, err)
+			var params JobParameters
+			assert.NoError(t, json.Unmarshal([]byte(jobReq.Parameters), &params))
+			assert.Equal(t, "runner-b", params.RunnerId)
+			orchAIStreamStartNoUrlsHandler(w, r)
+		})
+
+		server := httptest.NewServer(mux)
+		defer server.Close()
+
+		bsg.node.OrchestratorPool = newStubOrchestratorPool(bsg.node, []string{server.URL})
+		drivers.NodeStorage = drivers.NewMemoryDriver(nil)
+		startReq := StartRequest{Stream: "teststream", RtmpOutput: "rtmp://output", StreamId: "streamid", Params: "{}"}
+		body, _ := json.Marshal(startReq)
+		req := httptest.NewRequest(http.MethodPost, "/process/stream/start", bytes.NewBuffer(body))
+		req.Header.Set("Content-Type", "application/json")
+
+		jobReq := JobRequest{Request: "{}", Capability: "test-capability", Timeout: 10}
+		jobParams := JobParameters{EnableVideoIngress: true, EnableVideoEgress: true, EnableDataOutput: true, Runners: JobRunnersFilter{Include: []string{"runner-b"}}}
+		jobReq.Parameters = marshalToString(t, jobParams)
+		jobReqJSON, _ := json.Marshal(jobReq)
+		req.Header.Set(jobRequestHdr, base64.StdEncoding.EncodeToString(jobReqJSON))
+
+		w := httptest.NewRecorder()
+		bsg.StartStream().ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var streamUrls StreamUrls
+		assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &streamUrls))
+		assert.Equal(t, "runner-b", streamUrls.RunnerId)
+		<-orchStarted
 		streamParams, _ := bsg.streamPipelineParams(streamUrls.StreamId)
 		if streamParams.liveParams.kickOrch != nil {
 			streamParams.liveParams.kickOrch(errors.New("test cleanup"))

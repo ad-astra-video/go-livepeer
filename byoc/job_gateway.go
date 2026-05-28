@@ -41,6 +41,49 @@ func (bsg *BYOCGatewayServer) SubmitJob() http.Handler {
 	})
 }
 
+func (bsg *BYOCGatewayServer) DiscoverOrchestrators() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		bsg.discoverOrchestrators(ctx, w, r)
+	})
+}
+
+func (bsg *BYOCGatewayServer) discoverOrchestrators(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	jobReqHdr := r.Header.Get(jobRequestHdr)
+	if jobReqHdr == "" {
+		http.Error(w, fmt.Sprintf("Must have capability and timeout_seconds in %s header", jobRequestHdr), http.StatusBadRequest)
+		return
+	}
+
+	jobReq, jobParams, err := parseDiscoveryRequest(jobReqHdr)
+	if err != nil {
+		clog.Errorf(ctx, "Error parsing discovery request: %v", err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	searchTimeout := time.Duration(jobReq.Timeout) * time.Second
+	orchs, err := getJobOrchestrators(ctx, bsg.node, jobReq.Capability, jobParams, searchTimeout, searchTimeout, true)
+	if err != nil {
+		clog.Errorf(ctx, "Error discovering orchestrators for capability=%s err=%v", jobReq.Capability, err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	resp := DiscoveryResponse{Capability: jobReq.Capability, Orchestrators: orchs}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		clog.Errorf(ctx, "Error encoding discovery response: %v", err)
+	}
+}
+
 func (bsg *BYOCGatewayServer) submitJob(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 
 	gatewayJob, err := bsg.setupGatewayJob(ctx, r.Header.Get(jobRequestHdr), r.Header.Get(jobOrchSearchTimeoutHdr), r.Header.Get(jobOrchSearchRespTimeoutHdr), false)
@@ -66,6 +109,12 @@ func (bsg *BYOCGatewayServer) submitJob(ctx context.Context, w http.ResponseWrit
 	//the loop ends on Gateway error and bad request errors
 	for _, orchToken := range gatewayJob.Orchs {
 		workerResourceRoute := r.URL.Path
+
+		if err := gatewayJob.setSelectedRunner(orchToken.runnerId); err != nil {
+			clog.Errorf(ctx, "Error setting selected runner err=%v", err)
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 
 		err := gatewayJob.sign()
 		if err != nil {
@@ -106,13 +155,32 @@ func (bsg *BYOCGatewayServer) submitJob(ctx context.Context, w http.ResponseWrit
 		// for streaming responses: the balance is the balance before deducting cost to finish the request
 		//                          the ending balance is sent as last line before [DONE] in the SSE stream
 		// for non-streaming: the balance is the balance after deducting the cost of the request
+		contentType := resp.Header.Get("Content-Type")
 		orchBalance := resp.Header.Get(jobPaymentBalanceHdr)
-		w.Header().Set(jobPaymentBalanceHdr, orchBalance)
 		w.Header().Set("X-Metadata", resp.Header.Get("X-Metadata"))
 		w.Header().Set("X-Orchestrator-Url", orchToken.ServiceAddr)
 
-		if !strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
+		if !isSSEContentType(contentType) {
+			if isHTTPStreamingResponse(resp) {
+				w.Header().Set(jobPaymentBalanceHdr, orchBalance)
+				w.Header().Set("Content-Type", contentType)
+				w.WriteHeader(resp.StatusCode)
+
+				err = proxyHTTPStreamResponse(w, resp)
+
+				gatewayBalance := updateGatewayBalance(bsg.node, orchToken, gatewayJob.Job.Req.Capability, time.Since(start))
+				if err != nil {
+					clog.Errorf(ctx, "Unable to stream response err=%v", err)
+					return
+				}
+
+				clog.V(common.SHORT).Infof(ctx, "Job processed successfully took=%v balance=%v balance_from_orch=%v", time.Since(start), gatewayBalance.FloatString(0), orchBalance)
+				return
+			}
+
 			//non streaming response
+			w.Header().Set(jobPaymentBalanceHdr, orchBalance)
+			w.Header().Set("Content-Type", contentType)
 			data, err := io.ReadAll(resp.Body)
 			resp.Body.Close()
 			if err != nil {
@@ -123,12 +191,14 @@ func (bsg *BYOCGatewayServer) submitJob(ctx context.Context, w http.ResponseWrit
 
 			gatewayBalance := updateGatewayBalance(bsg.node, orchToken, gatewayJob.Job.Req.Capability, time.Since(start))
 			clog.V(common.SHORT).Infof(ctx, "Job processed successfully took=%v balance=%v balance_from_orch=%v", time.Since(start), gatewayBalance.FloatString(0), orchBalance)
+			w.WriteHeader(resp.StatusCode)
 			w.Write(data)
 			return
 		} else {
 			// Handle streaming response (SSE)
 			clog.Infof(ctx, "received streaming response")
 
+			w.Header().Set(jobPaymentBalanceHdr, orchBalance)
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.Header().Set("Cache-Control", "no-cache")
 			w.Header().Set("Connection", "keep-alive")
@@ -161,7 +231,7 @@ func (bsg *BYOCGatewayServer) submitJob(ctx context.Context, w http.ResponseWrit
 						line := scanner.Text()
 						respChan <- line
 						if strings.Contains(line, "[DONE]") {
-							break
+							return
 						}
 					}
 				}
@@ -213,7 +283,7 @@ func (bsg *BYOCGatewayServer) sendJobToOrch(ctx context.Context, r *http.Request
 	}
 
 	req.Header.Add(jobRequestHdr, signedReqHdr)
-	if orchToken.Price.PricePerUnit > 0 {
+	if runnerPrice := orchToken.SelectedRunnerPriceInfo(); runnerPrice != nil && runnerPrice.PricePerUnit > 0 {
 		paymentHdr, err := bsg.createPayment(ctx, jobReq, &orchToken)
 		if err != nil {
 			clog.Errorf(ctx, "Unable to create payment err=%v", err)
@@ -283,7 +353,7 @@ func (bsg *BYOCGatewayServer) setupGatewayJob(ctx context.Context, jobReqHdr str
 		jobReq.OrchSearchRespTimeout = respTimeout
 
 		//get pool of Orchestrators that can do the job
-		orchs, err = getJobOrchestrators(ctx, bsg.node, jobReq.Capability, jobParams, jobReq.OrchSearchTimeout, jobReq.OrchSearchRespTimeout)
+		orchs, err = getJobOrchestrators(ctx, bsg.node, jobReq.Capability, jobParams, jobReq.OrchSearchTimeout, jobReq.OrchSearchRespTimeout, false)
 		if err != nil {
 			return nil, errors.New(fmt.Sprintf("Unable to find orchestrators for capability %v err=%v", jobReq.Capability, err))
 		}
@@ -336,14 +406,76 @@ func (bsg *BYOCGatewayServer) verifyJobCreds(jobCreds string) (*JobRequest, erro
 	return jobData, nil
 }
 
-func getJobOrchestrators(ctx context.Context, node *core.LivepeerNode, capability string, params JobParameters, timeout time.Duration, respTimeout time.Duration) ([]JobToken, error) {
-	orchs := node.OrchestratorPool.GetInfos()
-	//setup the GET request to get the Orchestrator tokens
+func parseDiscoveryRequest(jobCreds string) (*JobRequest, JobParameters, error) {
+	jobData, err := parseJobRequest(jobCreds)
+	if err != nil {
+		return nil, JobParameters{}, err
+	}
+
+	if jobData.Capability == "" {
+		return nil, JobParameters{}, errNoCapabilitySet
+	}
+
+	var jobParams JobParameters
+	if strings.TrimSpace(jobData.Parameters) != "" {
+		if err := json.Unmarshal([]byte(jobData.Parameters), &jobParams); err != nil {
+			return nil, JobParameters{}, fmt.Errorf("Unable to unmarshal job parameters err=%v", err)
+		}
+	}
+
+	return jobData, jobParams, nil
+}
+
+func selectRunnerForToken(token *JobToken, params JobParameters) bool {
+	if len(token.RunnerIDs) == 0 {
+		token.runnerId = ""
+		return len(params.Runners.Include) == 0
+	}
+
+	availableRunnerIDs := token.RunnerIDs[:0]
+	for _, runnerID := range token.RunnerIDs {
+		if len(params.Runners.Include) > 0 && !slices.Contains(params.Runners.Include, runnerID) {
+			continue
+		}
+		if slices.Contains(params.Runners.Exclude, runnerID) {
+			continue
+		}
+		availableRunnerIDs = append(availableRunnerIDs, runnerID)
+	}
+	token.RunnerIDs = availableRunnerIDs
+	filteredRunnerPrices := token.RunnerPrices[:0]
+	for _, runnerPrice := range token.RunnerPrices {
+		if slices.Contains(token.RunnerIDs, runnerPrice.RunnerId) {
+			filteredRunnerPrices = append(filteredRunnerPrices, runnerPrice)
+		}
+	}
+	token.RunnerPrices = filteredRunnerPrices
+	if len(token.RunnerIDs) == 0 {
+		return false
+	}
+	token.runnerId = token.RunnerIDs[0]
+	bestPrice := token.RunnerPriceInfo(token.runnerId)
+	for _, runnerID := range token.RunnerIDs[1:] {
+		candidatePrice := token.RunnerPriceInfo(runnerID)
+		if candidatePrice == nil {
+			continue
+		}
+		if bestPrice == nil || big.NewRat(candidatePrice.PricePerUnit, candidatePrice.PixelsPerUnit).Cmp(big.NewRat(bestPrice.PricePerUnit, bestPrice.PixelsPerUnit)) < 0 {
+			token.runnerId = runnerID
+			bestPrice = candidatePrice
+		}
+	}
+	return true
+}
+
+func getJobOrchestrators(ctx context.Context, node *core.LivepeerNode, capability string, params JobParameters, timeout time.Duration, respTimeout time.Duration, includeZeroCapacity bool) ([]JobToken, error) {
 	reqSender, err := getJobSender(ctx, node)
 	if err != nil {
 		clog.Errorf(ctx, "Failed to get job sender err=%v", err)
 		return nil, err
 	}
+
+	orchs := node.OrchestratorPool.GetInfos()
 
 	getOrchJobToken := func(ctx context.Context, orchUrl *url.URL, reqSender JobSender, respTimeout time.Duration, tokenCh chan JobToken, errCh chan error) {
 		start := time.Now()
@@ -388,6 +520,7 @@ func getJobOrchestrators(ctx context.Context, node *core.LivepeerNode, capabilit
 			return
 		}
 
+		jobToken.DiscoveryTimeMs = latency.Milliseconds()
 		tokenCh <- jobToken
 	}
 
@@ -412,13 +545,17 @@ func getJobOrchestrators(ctx context.Context, node *core.LivepeerNode, capabilit
 			continue
 		}
 
-		go getOrchJobToken(ctx, orchs[i].URL, *reqSender, respTimeout, tokenCh, errCh)
+		go getOrchJobToken(tokensCtx, orchs[i].URL, *reqSender, respTimeout, tokenCh, errCh)
 	}
 
 	for nbResp < numAvailableOrchs && len(jobTokens) < numAvailableOrchs {
 		select {
 		case token := <-tokenCh:
-			if token.AvailableCapacity > 0 {
+			if !selectRunnerForToken(&token, params) {
+				nbResp++
+				continue
+			}
+			if includeZeroCapacity || token.AvailableCapacity > 0 {
 				jobTokens = append(jobTokens, token)
 			}
 			nbResp++
@@ -514,4 +651,18 @@ func getToken(ctx context.Context, respTimeout time.Duration, orchUrl, capabilit
 		return nil, err
 	}
 	return nil, fmt.Errorf("failed to get token from Orchestrator after %d attempts", attempt)
+}
+
+func (g *gatewayJob) setSelectedRunner(runnerID string) error {
+	if g == nil || g.Job == nil || g.Job.Req == nil || g.Job.Params == nil {
+		return fmt.Errorf("invalid gateway job")
+	}
+
+	g.Job.Params.RunnerId = runnerID
+	paramsJSON, err := json.Marshal(g.Job.Params)
+	if err != nil {
+		return fmt.Errorf("unable to encode job parameters err=%v", err)
+	}
+	g.Job.Req.Parameters = string(paramsJSON)
+	return nil
 }

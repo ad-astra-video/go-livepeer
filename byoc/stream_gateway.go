@@ -186,6 +186,12 @@ func (bsg *BYOCGatewayServer) runStream(gatewayJob *gatewayJob) {
 		ctx = clog.AddVal(ctx, "orch", hexutil.Encode(orch.TicketParams.Recipient))
 		ctx = clog.AddVal(ctx, "orch_url", orch.ServiceAddr)
 
+		if err := gatewayJob.setSelectedRunner(orch.runnerId); err != nil {
+			clog.Errorf(ctx, "Error setting selected runner err=%v", err)
+			exitErr = err
+			return
+		}
+
 		err = gatewayJob.sign()
 		if err != nil {
 			clog.Errorf(ctx, "Error signing job, exiting stream processing request: %v", err)
@@ -300,6 +306,10 @@ func (bsg *BYOCGatewayServer) refreshToken(ctx context.Context, streamID string,
 		clog.Errorf(ctx, "Error getting token for orch=%v err=%v", orch.ServiceAddr, err)
 		return orch
 	}
+	if !selectRunnerForToken(newToken, *gatewayJob.Job.Params) {
+		clog.Errorf(ctx, "No eligible runners available for orch=%v", orch.ServiceAddr)
+		return orch
+	}
 
 	return *newToken
 }
@@ -395,7 +405,7 @@ func (bsg *BYOCGatewayServer) sendPaymentForStream(ctx context.Context, streamID
 		return err
 	}
 
-	if orch.Price.PricePerUnit > 0 {
+	if runnerPrice := orch.SelectedRunnerPriceInfo(); runnerPrice != nil && runnerPrice.PricePerUnit > 0 {
 		pmtHdr, err := bsg.createPayment(ctx, req, newToken)
 		if err != nil {
 			clog.Errorf(ctx, "Error processing stream payment for %s: %v", streamID, err)
@@ -663,8 +673,13 @@ func (bsg *BYOCGatewayServer) setupStream(ctx context.Context, r *http.Request, 
 	bsg.newStreamPipeline(requestID, streamID, pipeline, params, paramsReqBytes) //track the pipeline for cancellation
 
 	job.Job.Req.ID = streamID
+	runnerID := ""
+	if len(job.Orchs) > 0 {
+		runnerID = job.Orchs[0].runnerId
+	}
 	streamUrls := StreamUrls{
 		StreamId:      streamID,
+		RunnerId:      runnerID,
 		WhipUrl:       whipURL,
 		WhepUrl:       whepURL,
 		RtmpUrl:       rtmpURL,

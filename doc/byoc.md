@@ -21,10 +21,10 @@ def reverse_text():
     # Get the text from the request
     content = request.get_json(silent=True) or {}
     text = content.get('text', '')
-    
+
     # Reverse the text
     reversed_text = text[::-1]
-    
+
     # Return the reversed text
     return Response(
         json.dumps({'original': text, 'reversed': reversed_text}),
@@ -34,6 +34,7 @@ def reverse_text():
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
 ```
+
 ### Step 1b: Create a container to run external capability
 
 Create a file named `Dockerfile.reverse_server` in the same directory as your `reverse_server.py`:
@@ -58,13 +59,20 @@ CMD ["python", "reverse_server.py"]
 Create a file named `register_capability.py`:
 
 ```python
-import requests, time
+import atexit
+import requests
+import time
 
-#note: price is 0 for the capability registered so will be able to use with wallets with no eth deposit/reserve
-#      if price is set above 0 will need to use an on chain Orchestrator and a Gateway with a Deposit/Reserve
+runner_id = "runner-a"
+orchestrator_url = "https://byoc_orchestrator:8935"
+
+# note: price is 0 for the capability registered so will be able to use with wallets with no eth deposit/reserve
+#       if price is set above 0 will need to use an on chain Orchestrator and a Gateway with a Deposit/Reserve
 data = {
+   "id": runner_id,
    "name": "text-reversal",
    "url": "http://byoc_reverse_text:5000",
+   "order": 10,
    "capacity": 1,
    "price_per_unit": 0,
    "price_scaling": 1,
@@ -75,19 +83,42 @@ headers = {
     "Authorization": "orch-secret"
 }
 
+def unregister():
+    try:
+        requests.post(
+            f"{orchestrator_url}/capability/unregister",
+            json={"id": runner_id},
+            headers=headers,
+            verify=False,
+        )
+    except Exception:
+        pass
+
+atexit.register(unregister)
+
 for i in range(10):
     #wait 1 second then try
     time.sleep(1)
 
     try:
-        registered = requests.post("https://byoc_orchestrator:8935/capability/register", json=data, headers=headers, verify=False)
+        registered = requests.post(f"{orchestrator_url}/capability/register", json=data, headers=headers, verify=False)
         if registered.status_code == 200:
             break
         else:
             print(f"registration not completed: {registered.text}")
-    except Exception as e:
-        pass   
+    except Exception:
+        pass
 ```
+
+Registration request fields:
+
+- `id`: optional stable runner identifier. If omitted, the runner key defaults to a generated `runner_...` value.
+- `name`: logical capability name that clients reference in the `Livepeer` header.
+- `url`: runner base URL that the orchestrator will call.
+- `order`: optional priority used when multiple runners are registered for the same capability. Lower values are selected first.
+- `capacity`: max concurrent jobs for this runner registration.
+- `price_per_unit`, `price_scaling`, `currency`: pricing used for the capability.
+- `token`: optional bearer token that the orchestrator will forward to this runner when it is selected.
 
 ### Step 2b: Create a container to register external capability
 
@@ -105,7 +136,6 @@ COPY register_capability.py .
 CMD ["python", "register_capability.py"]
 
 ````
-
 
 ### Step 3: Build the Docker Images
 ```
@@ -143,7 +173,7 @@ services:
   register_capability:
     image: byoc_register_capability
     container_name: byoc_register_capability
-    depends_on: 
+    depends_on:
       - reverse_text
 
 networks:
@@ -182,3 +212,57 @@ Response will be:
   "reversed": "!COYB reepevil ,olleH"
 }
 ```
+
+### Response modes
+
+BYOC request endpoints under `/process/request/{capability}` support three response patterns from the runner container:
+
+- Regular HTTP responses, such as `application/json`, where the full response body is returned once processing completes.
+- Server-Sent Events using `text/event-stream`.
+- Streamed HTTP responses for non-SSE content types, such as `application/x-ndjson` or `multipart/mixed`, where chunks are forwarded to the caller as they arrive.
+
+For streamed responses, the Gateway preserves the runner response `Content-Type`.
+
+Payment balance behavior:
+
+- For regular non-streaming responses, `Livepeer-Balance` is the final balance after the request completes.
+- For SSE responses, `Livepeer-Balance` in the initial headers is the starting balance for the stream, and the final balance is sent in the stream before `[DONE]`.
+- For streamed HTTP non-SSE responses, `Livepeer-Balance` in the initial headers is the starting balance for the stream. For structured streamed responses such as `application/x-ndjson`, the final balance can be sent as the last streamed record. For binary streaming, prefer `multipart/mixed` so the final balance can be sent as a separate JSON part.
+
+Example streamed HTTP response using `application/x-ndjson`:
+
+```http
+HTTP/1.1 200 OK
+Content-Type: application/x-ndjson
+Livepeer-Balance: 17
+
+{"chunk":1}
+{"chunk":2}
+{"balance": 9}
+```
+
+In this example, `17` is the initial balance advertised when the stream begins, and `9` is the final balance after the request finishes.
+
+Example streamed HTTP response for binary data using `multipart/mixed`:
+
+```http
+HTTP/1.1 200 OK
+Content-Type: multipart/mixed; boundary=lp-boundary
+Livepeer-Balance: 17
+
+--lp-boundary
+Content-Type: application/octet-stream
+
+<binary chunk 1>
+--lp-boundary
+Content-Type: application/octet-stream
+
+<binary chunk 2>
+--lp-boundary
+Content-Type: application/json
+
+{"balance": 9}
+--lp-boundary--
+```
+
+In this example, the binary payload is streamed in separate `application/octet-stream` parts. The final JSON part carries the settled balance.

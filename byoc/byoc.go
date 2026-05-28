@@ -180,6 +180,9 @@ func (bsg *BYOCGatewayServer) registerRoutes() {
 
 	// Job submission routes for batch processing
 	bsg.httpMux.Handle("/process/request/", bsg.SubmitJob())
+
+	// capability discovery
+	bsg.httpMux.Handle("GET /process/discovery", bsg.DiscoverOrchestrators())
 }
 
 // withCORS adds CORS headers to responses

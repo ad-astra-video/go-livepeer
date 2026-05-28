@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"testing/synctest"
@@ -102,6 +104,83 @@ func TestSubmitJob_MethodNotAllowed(t *testing.T) {
 	assert.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode)
 }
 
+func TestDiscoverOrchestrators_MethodNotAllowed(t *testing.T) {
+	bsg := &BYOCGatewayServer{node: mockJobLivepeerNode()}
+
+	req := httptest.NewRequest(http.MethodPost, "/process/discovery", nil)
+	w := httptest.NewRecorder()
+
+	bsg.DiscoverOrchestrators().ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Result().StatusCode)
+}
+
+func TestDiscoverOrchestrators_MissingJobRequestHeader(t *testing.T) {
+	bsg := &BYOCGatewayServer{node: mockJobLivepeerNode()}
+
+	req := httptest.NewRequest(http.MethodGet, "/process/discovery", nil)
+	w := httptest.NewRecorder()
+
+	bsg.DiscoverOrchestrators().ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Result().StatusCode)
+}
+
+func TestDiscoverOrchestrators_UsesTimeoutAndReturnsAllSuccessfulTokens(t *testing.T) {
+	var fastURL string
+	fastServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodGet, r.Method)
+		assert.NotEmpty(t, r.Header.Get(jobEthAddressHdr))
+		assert.Equal(t, "test-capability", r.Header.Get(jobCapabilityHdr))
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(JobToken{
+			ServiceAddr:       fastURL,
+			AvailableCapacity: 0,
+			Balance:           1,
+		})
+	}))
+	defer fastServer.Close()
+	fastURL = fastServer.URL
+
+	var slowURL string
+	slowServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(2 * time.Second)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(JobToken{
+			ServiceAddr:       slowURL,
+			AvailableCapacity: 4,
+			Balance:           2,
+		})
+	}))
+	defer slowServer.Close()
+	slowURL = slowServer.URL
+
+	node := mockJobLivepeerNode()
+	node.OrchestratorPool = newStubOrchestratorPool(node, []string{fastServer.URL, slowServer.URL})
+	bsg := &BYOCGatewayServer{node: node}
+
+	req := httptest.NewRequest(http.MethodGet, "/process/discovery", nil)
+	req.Header.Set(jobRequestHdr, discoveryJobRequestHeader(t, "test-capability", 1, JobParameters{}))
+	w := httptest.NewRecorder()
+
+	bsg.DiscoverOrchestrators().ServeHTTP(w, req)
+
+	resp := w.Result()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+
+	var discoveryResp DiscoveryResponse
+	assert.NoError(t, json.Unmarshal(body, &discoveryResp))
+	assert.Equal(t, "test-capability", discoveryResp.Capability)
+	assert.Len(t, discoveryResp.Orchestrators, 1)
+	assert.Equal(t, int64(0), discoveryResp.Orchestrators[0].AvailableCapacity)
+	assert.GreaterOrEqual(t, discoveryResp.Orchestrators[0].DiscoveryTimeMs, int64(0))
+	assert.True(t, strings.HasPrefix(discoveryResp.Orchestrators[0].ServiceAddr, "http://"))
+}
+
 func TestCreatePayment(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ctx := context.TODO()
@@ -138,10 +217,9 @@ func TestCreatePayment(t *testing.T) {
 			},
 			SenderAddress: &sender,
 			Balance:       0,
-			Price: &net.PriceInfo{
-				PricePerUnit:  100,
-				PixelsPerUnit: 1,
-			},
+			runnerId:      "runner-a",
+			RunnerIDs:     []string{"runner-a"},
+			RunnerPrices:  []RunnerPrice{{RunnerId: "runner-a", Price: &net.PriceInfo{PricePerUnit: 100, PixelsPerUnit: 1}}},
 		}
 
 		var pmTickets net.Payment
@@ -169,7 +247,7 @@ func TestCreatePayment(t *testing.T) {
 		//test 600 tickets
 		jobReq.Timeout = 600
 		mockSender.On("CreateTicketBatch", "foo", jobReq.Timeout).Return(mockTicketBatch(600), nil).Once()
-		orchTocken.Price.PricePerUnit = 6000
+		orchTocken.RunnerPrices[0].Price.PricePerUnit = 6000
 		payment, err = bsg.createPayment(ctx, &jobReq, &orchTocken)
 		assert.Nil(t, err)
 		pmPayment, err = base64.StdEncoding.DecodeString(payment)
@@ -178,6 +256,77 @@ func TestCreatePayment(t *testing.T) {
 		assert.Nil(t, err)
 		assert.Equal(t, 600, len(pmTickets.TicketSenderParams))
 	})
+}
+
+func TestSubmitJob_ForwardsHTTPStreamingResponse(t *testing.T) {
+	var orchURL string
+	orchServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/process/token":
+			token := createMockJobToken(orchURL)
+			token.RunnerPrices[0].Price.PricePerUnit = 0
+			token.RunnerPrices[1].Price.PricePerUnit = 0
+			w.Header().Set("Content-Type", "application/json")
+			assert.NoError(t, json.NewEncoder(w).Encode(token))
+		case "/process/request/test-capability":
+			w.Header().Set("Content-Type", "application/x-ndjson")
+			w.Header().Set("X-Metadata", `{"source":"orch"}`)
+			w.Header().Set(jobPaymentBalanceHdr, "17")
+
+			flusher, ok := w.(http.Flusher)
+			assert.True(t, ok)
+
+			_, err := w.Write([]byte("{\"chunk\":1}\n"))
+			assert.NoError(t, err)
+			flusher.Flush()
+
+			_, err = w.Write([]byte("{\"chunk\":2}\n"))
+			assert.NoError(t, err)
+
+			_, err = w.Write([]byte("{\"balance\": 9}\n"))
+			assert.NoError(t, err)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer orchServer.Close()
+	orchURL = orchServer.URL
+
+	node := mockJobLivepeerNode()
+	node.Balances = core.NewAddressBalances(1 * time.Second)
+	defer node.Balances.StopCleanup()
+	node.OrchestratorPool = newStubOrchestratorPool(node, []string{orchServer.URL})
+
+	bsg := &BYOCGatewayServer{node: node}
+
+	jobReq := JobRequest{
+		ID:         "job-1",
+		Request:    "{}",
+		Parameters: "{}",
+		Capability: "test-capability",
+		Timeout:    1,
+	}
+	jobReqJSON, err := json.Marshal(jobReq)
+	assert.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/process/request/test-capability", strings.NewReader(`{"input":"hello"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(jobRequestHdr, base64.StdEncoding.EncodeToString(jobReqJSON))
+
+	w := httptest.NewRecorder()
+	bsg.SubmitJob().ServeHTTP(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(t, err)
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, "application/x-ndjson", resp.Header.Get("Content-Type"))
+	assert.Equal(t, `{"source":"orch"}`, resp.Header.Get("X-Metadata"))
+	assert.Equal(t, orchServer.URL, resp.Header.Get("X-Orchestrator-Url"))
+	assert.Equal(t, "17", resp.Header.Get(jobPaymentBalanceHdr))
+	assert.Equal(t, "{\"chunk\":1}\n{\"chunk\":2}\n{\"balance\": 9}\n", string(body))
 }
 
 func createTestPayment(capability string) (string, error) {
@@ -218,10 +367,9 @@ func createTestPayment(capability string) (string, error) {
 		},
 		SenderAddress: &sender,
 		Balance:       0,
-		Price: &net.PriceInfo{
-			PricePerUnit:  100,
-			PixelsPerUnit: 1,
-		},
+		runnerId:      "runner-a",
+		RunnerIDs:     []string{"runner-a"},
+		RunnerPrices:  []RunnerPrice{{RunnerId: "runner-a", Price: &net.PriceInfo{PricePerUnit: 100, PixelsPerUnit: 1}}},
 	}
 
 	pmt, err := bsg.createPayment(ctx, &jobReq, &orchTocken)
@@ -230,6 +378,22 @@ func createTestPayment(capability string) (string, error) {
 	}
 
 	return pmt, nil
+}
+
+func discoveryJobRequestHeader(t *testing.T, capability string, timeoutSeconds int, params JobParameters) string {
+	t.Helper()
+	jobReq := JobRequest{
+		Capability: capability,
+		Timeout:    timeoutSeconds,
+	}
+	if len(params.Orchestrators.Include) > 0 || len(params.Orchestrators.Exclude) > 0 || params.EnableVideoIngress || params.EnableVideoEgress || params.EnableDataOutput {
+		paramsJSON, err := json.Marshal(params)
+		assert.NoError(t, err)
+		jobReq.Parameters = string(paramsJSON)
+	}
+	jobReqJSON, err := json.Marshal(jobReq)
+	assert.NoError(t, err)
+	return base64.StdEncoding.EncodeToString(jobReqJSON)
 }
 
 func mockTicketBatch(count int) *pm.TicketBatch {
@@ -342,6 +506,7 @@ func TestSubmitJob_OrchestratorSelectionParams(t *testing.T) {
 				params,
 				100*time.Millisecond, // Short timeout for testing
 				50*time.Millisecond,
+				false,
 			)
 
 			if tc.expectedCount == 0 {
@@ -409,6 +574,7 @@ func TestSetupGatewayJob(t *testing.T) {
 	assert.Equal(t, "test-stream", gatewayJob.Job.Details.StreamId)
 	assert.Equal(t, 10, gatewayJob.Job.Req.Timeout)
 	assert.Equal(t, 1, len(gatewayJob.Orchs))
+	assert.Equal(t, "runner-a", gatewayJob.Orchs[0].runnerId)
 
 	//test signing request
 	assert.Empty(t, gatewayJob.SignedJobReq)
@@ -425,4 +591,68 @@ func TestSetupGatewayJob(t *testing.T) {
 	gatewayJob, err = bsg.setupGatewayJob(context.Background(), jobReqB64, "1s", "250ms", false)
 	assert.Error(t, err)
 	assert.Nil(t, gatewayJob)
+}
+
+func TestSetupGatewayJob_FiltersByRunnerIDs(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/process/token" {
+			http.NotFound(w, r)
+			return
+		}
+		token := createMockJobToken("http://" + r.Host)
+		token.RunnerIDs = []string{"runner-a", "runner-b"}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(token)
+	}))
+	defer server.Close()
+
+	node := mockJobLivepeerNode()
+	node.OrchestratorPool = newStubOrchestratorPool(node, []string{server.URL})
+	bsg := &BYOCGatewayServer{node: node}
+
+	jobDetails := JobRequestDetails{StreamId: "test-stream"}
+	jobParams := JobParameters{Runners: JobRunnersFilter{Include: []string{"runner-b"}}}
+	jobReq := JobRequest{ID: "job-1", Request: marshalToString(t, jobDetails), Parameters: marshalToString(t, jobParams), Capability: "test-capability", Timeout: 10}
+	jobReqB, err := json.Marshal(jobReq)
+	assert.NoError(t, err)
+
+	gatewayJob, err := bsg.setupGatewayJob(context.Background(), base64.StdEncoding.EncodeToString(jobReqB), "1s", "250ms", false)
+	assert.NoError(t, err)
+	assert.Len(t, gatewayJob.Orchs, 1)
+	assert.Equal(t, []string{"runner-b"}, gatewayJob.Orchs[0].RunnerIDs)
+	assert.Len(t, gatewayJob.Orchs[0].RunnerPrices, 1)
+	assert.Equal(t, "runner-b", gatewayJob.Orchs[0].RunnerPrices[0].RunnerId)
+	assert.Equal(t, int64(202), gatewayJob.Orchs[0].RunnerPrices[0].Price.PricePerUnit)
+	assert.Equal(t, "runner-b", gatewayJob.Orchs[0].runnerId)
+}
+
+func TestSetupGatewayJob_DefaultsToLowestPricedRunner(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/process/token" {
+			http.NotFound(w, r)
+			return
+		}
+		token := createMockJobToken("http://" + r.Host)
+		token.RunnerPrices = []RunnerPrice{
+			{RunnerId: "runner-a", Price: &net.PriceInfo{PricePerUnit: 202, PixelsPerUnit: 1}},
+			{RunnerId: "runner-b", Price: &net.PriceInfo{PricePerUnit: 101, PixelsPerUnit: 1}},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(token)
+	}))
+	defer server.Close()
+
+	node := mockJobLivepeerNode()
+	node.OrchestratorPool = newStubOrchestratorPool(node, []string{server.URL})
+	bsg := &BYOCGatewayServer{node: node}
+
+	jobDetails := JobRequestDetails{StreamId: "test-stream"}
+	jobReq := JobRequest{ID: "job-1", Request: marshalToString(t, jobDetails), Parameters: marshalToString(t, JobParameters{}), Capability: "test-capability", Timeout: 10}
+	jobReqB, err := json.Marshal(jobReq)
+	assert.NoError(t, err)
+
+	gatewayJob, err := bsg.setupGatewayJob(context.Background(), base64.StdEncoding.EncodeToString(jobReqB), "1s", "250ms", false)
+	assert.NoError(t, err)
+	assert.Len(t, gatewayJob.Orchs, 1)
+	assert.Equal(t, "runner-b", gatewayJob.Orchs[0].runnerId)
 }

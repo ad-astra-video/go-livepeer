@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"math/big"
 	gonet "net"
@@ -99,6 +100,79 @@ func parseBalance(line string) *big.Rat {
 	} else {
 		return big.NewRat(0, 1)
 	}
+}
+
+func isSSEContentType(contentType string) bool {
+	return strings.Contains(strings.ToLower(contentType), "text/event-stream")
+}
+
+func isHTTPStreamingResponse(resp *http.Response) bool {
+	if resp == nil {
+		return false
+	}
+
+	if isSSEContentType(resp.Header.Get("Content-Type")) {
+		return false
+	}
+
+	if resp.ContentLength < 0 {
+		return true
+	}
+
+	for _, encoding := range resp.TransferEncoding {
+		if strings.EqualFold(encoding, "chunked") {
+			return true
+		}
+	}
+
+	return false
+}
+
+func supportsFinalBalanceChunk(contentType string) bool {
+	contentType = strings.ToLower(contentType)
+	return strings.Contains(contentType, "application/x-ndjson") || strings.Contains(contentType, "application/jsonl") || strings.Contains(contentType, "application/json-seq") || strings.Contains(contentType, "text/plain")
+}
+
+type flushWriter struct {
+	writer  http.ResponseWriter
+	flusher http.Flusher
+}
+
+func (fw flushWriter) Write(data []byte) (int, error) {
+	n, err := fw.writer.Write(data)
+	if err == nil {
+		fw.flusher.Flush()
+	}
+	return n, err
+}
+
+func proxyHTTPStreamResponse(w http.ResponseWriter, resp *http.Response) error {
+	defer resp.Body.Close()
+
+	writer := io.Writer(w)
+	if flusher, ok := w.(http.Flusher); ok {
+		writer = flushWriter{writer: w, flusher: flusher}
+	}
+
+	_, err := io.Copy(writer, resp.Body)
+	return err
+}
+
+func writeFinalBalanceChunk(w http.ResponseWriter, contentType, balance string) error {
+	if !supportsFinalBalanceChunk(contentType) {
+		return nil
+	}
+
+	_, err := w.Write([]byte(fmt.Sprintf("{\"balance\": %s}\n", balance)))
+	if err != nil {
+		return err
+	}
+
+	if flusher, ok := w.(http.Flusher); ok {
+		flusher.Flush()
+	}
+
+	return nil
 }
 
 func getRemoteHost(remoteAddr string) (string, error) {
