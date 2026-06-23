@@ -243,6 +243,9 @@ func (h *lphttp) ReserveLiveRunnerSession(w http.ResponseWriter, r *http.Request
 		respondWithLiveRunnerError(w, err)
 		return
 	}
+	if monitor.Enabled {
+		monitor.LiveRunnerRequest(runnerID)
+	}
 	ctx = clog.AddVal(ctx, "runner_id", runnerID)
 	ctx = clog.AddVal(ctx, "session_id", sessionID)
 	if paymentRequired {
@@ -258,6 +261,7 @@ func (h *lphttp) ReserveLiveRunnerSession(w http.ResponseWriter, r *http.Request
 		accountPaymentFunc := func(inPixels int64) error {
 			err := paymentReceiver.AccountPayment(monitorCtx, &SegmentInfoReceiver{
 				sender:    getPaymentSender(payment),
+				runnerID:  runnerID,
 				inPixels:  inPixels,
 				priceInfo: payment.GetExpectedPrice(),
 				sessionID: string(segData.ManifestID),
@@ -588,6 +592,9 @@ func (h *lphttp) ProxyLiveRunnerSingleShot(w http.ResponseWriter, r *http.Reques
 		respondWithLiveRunnerError(w, err)
 		return
 	}
+	if monitor.Enabled {
+		monitor.LiveRunnerRequest(runnerID)
+	}
 	defer func() {
 		if err := manager.ReleaseSession(runnerID, sessionID); err != nil {
 			slog.Error("error releasing single-shot session", "runner_id", runnerID, "session_id", sessionID, "err", err)
@@ -869,6 +876,7 @@ func (h *lphttp) StartLiveVideoToVideo() http.Handler {
 			accountPaymentFunc := func(inPixels int64) error {
 				err := paymentReceiver.AccountPayment(ctx, &SegmentInfoReceiver{
 					sender:    sender,
+					runnerID:  "",
 					inPixels:  inPixels,
 					priceInfo: priceInfo,
 					sessionID: mid,
@@ -1044,6 +1052,7 @@ func (h *lphttp) StartScope() http.Handler {
 			accountPaymentFunc := func(inPixels int64) error {
 				err := paymentReceiver.AccountPayment(ctx, &SegmentInfoReceiver{
 					sender:    sender,
+					runnerID:  "",
 					inPixels:  inPixels,
 					priceInfo: priceInfo,
 					sessionID: manifestID,
