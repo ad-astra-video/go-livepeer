@@ -75,6 +75,14 @@ type LocalSenderMonitorConfig struct {
 	RPCTimeout      time.Duration
 
 	// The security needed for tickets from senders
+	//
+	// Replaces the active-orchestrator set size when dividing a sender's reserve
+	// into a per-orchestrator allocation. -1 (default) uses the real active set
+	// size, i.e. reserve/numActive, which matches the share the TicketBroker
+	// contract actually guarantees on-chain. Setting it lower (e.g. 1) counts more
+	// of the sender's reserve toward this orchestrator's float, so a gateway can
+	// hold less reserve and still send higher face value tickets. Note this only
+	// widens acceptance (see reserveAlloc) and does NOT raise the on-chain payout.
 	ReserveMultiplier int
 }
 
@@ -233,7 +241,30 @@ func (sm *LocalSenderMonitor) reserveAlloc(addr ethcommon.Address) (*big.Int, er
 		return big.NewInt(0), nil
 	}
 
-	//limit reserve allocation if reserveMultiplier set at startup
+	// ReserveMultiplier override (only if set at startup; -1 = use active set).
+	//
+	// NOTE on what this does and does NOT control:
+	// reserveAlloc is the orchestrator's per-sender float - the value it can
+	// count on recovering from that sender's reserve. On-chain settlement of a
+	// winning ticket (TicketBroker.redeemWinningTicket) is split into two legs:
+	//   - DEPOSIT leg, never clamped: a ticket is paid in full from the sender's
+	//     deposit up to its face value (sender.deposit -= faceValue). The deposit
+	//     is 100% available to every orchestrator, so funding a larger GATEWAY
+	//     deposit is the only way to make a ticket "pay more than reserve/numActive"
+	//     and have that value actually land (no clamp applies).
+	//   - RESERVE leg, clamped: only the portion of the face value exceeding the
+	//     sender's deposit is drawn from its reserve, and it is capped at the
+	//     contract's per-orchestrator allocation = reserve / numActiveOrchestrators
+	//     per round - independent of any client-side multiplier.
+	//
+	// Overriding poolSize below (down to 1 = the whole reserve) therefore only
+	// widens ACCEPTANCE: it inflates this orchestrator's float, which caps the
+	// faceValue the recipient will accept via MaxFloat -> recipient.faceValue. A
+	// gateway can hold less reserve and still send higher face value tickets. It
+	// does NOT raise the on-chain payout: any value above deposit + reserve/numActive
+	// is trust-backed (relies on the sender keeping a funded deposit / not
+	// double-spending), not contract-backed, and cannot be recovered if the
+	// sender's deposit is drained.
 	if sm.cfg.ReserveMultiplier != -1 {
 		poolSize = big.NewInt(int64(sm.cfg.ReserveMultiplier))
 	}
